@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SYNTHETIC legacy code — fictional portfolio test data, not a real system. -->
+<weblogic-ejb-jar>
+  <weblogic-enterprise-bean>
+    <ejb-name>OrderConfirmationMessageListenerBean</ejb-name>
+    <message-driven-descriptor>
+      <destination-jndi-name>jms.OrderConfirmationQueue</destination-jndi-name>
+      <connection-factory-jndi-name>jms.OrderVaultConnectionFactory</connection-factory-jndi-name>
+    </message-driven-descriptor>
+  </weblogic-enterprise-bean>
+
+  <weblogic-enterprise-bean>
+    <ejb-name>WarehousePickListenerBean</ejb-name>
+    <message-driven-descriptor>
+      <destination-jndi-name>jms.WarehousePickQueue</destination-jndi-name>
+      <connection-factory-jndi-name>jms.OrderVaultConnectionFactory</connection-factory-jndi-name>
+    </message-driven-descriptor>
+  </weblogic-enterprise-bean>
+
+  <!--
+    NOTE — the significant thing about this file is what's ABSENT:
+
+    Neither queue below has an <error-destination> configured, which is
+    WebLogic's mechanism for a dead-letter queue. There is also no
+    <redelivery-limit> set, so WebLogic falls back to its server-default
+    redelivery policy (typically unlimited-until-expiration or a small
+    fixed retry count depending on server config, not shown here).
+
+    The practical effect: a message that consistently fails processing
+    (see WarehousePickListener.java's javadoc) has no safe place to land
+    for manual review. It either cycles as a "poison message" consuming
+    consumer capacity, or eventually expires and is silently dropped,
+    depending on the queue's default time-to-live — with no alert either
+    way. This is one of the concrete messaging risks flagged for the
+    migration effort.
+
+    A production-grade fix (and a natural target-state improvement for the
+    Spring Boot migration) would configure an explicit dead-letter queue
+    per source queue, with a bounded redelivery count, and an alert wired
+    to the dead-letter queue's depth.
+  -->
+
+</weblogic-ejb-jar>

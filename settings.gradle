@@ -1,0 +1,9 @@
+rootProject.name = 'legacy-api-migration-advisor'
+
+include 'common'
+include 'persistence-module'
+include 'chat-module'
+include 'tools-module'
+include 'rag-module'
+include 'agent-module'
+include 'structured-output-module'

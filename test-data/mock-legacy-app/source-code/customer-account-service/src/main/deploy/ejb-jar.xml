@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SYNTHETIC legacy code — fictional portfolio test data, not a real system. -->
+<ejb-jar>
+  <enterprise-beans>
+    <session>
+      <ejb-name>CustomerAccountSessionBean</ejb-name>
+      <home>com.ordervault.customeraccount.CustomerAccountHome</home>
+      <remote>com.ordervault.customeraccount.CustomerAccountRemote</remote>
+      <ejb-class>com.ordervault.customeraccount.CustomerAccountSessionBean</ejb-class>
+      <session-type>Stateless</session-type>
+      <transaction-type>Container</transaction-type>
+      <resource-ref>
+        <res-ref-name>jdbc/OrderVaultDS</res-ref-name>
+        <res-type>javax.sql.DataSource</res-type>
+        <res-auth>Container</res-auth>
+      </resource-ref>
+    </session>
+  </enterprise-beans>
+
+  <assembly-descriptor>
+    <container-transaction>
+      <method>
+        <ejb-name>CustomerAccountSessionBean</ejb-name>
+        <method-name>*</method-name>
+      </method>
+      <trans-attribute>Required</trans-attribute>
+    </container-transaction>
+    <!--
+      NOTE: updateAddress() participates in the same container transaction
+      as everything else, despite making a slow, unbounded external HTTP
+      call (AddressValidationClient) mid-transaction. This means a hung
+      external call can hold a DB transaction open far longer than
+      intended — a secondary risk compounding the missing-timeout issue.
+    -->
+  </assembly-descriptor>
+</ejb-jar>

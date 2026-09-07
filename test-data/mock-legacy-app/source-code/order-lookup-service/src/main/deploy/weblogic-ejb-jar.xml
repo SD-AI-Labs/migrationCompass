@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SYNTHETIC legacy code — fictional portfolio test data, not a real system. -->
+<weblogic-ejb-jar>
+  <weblogic-enterprise-bean>
+    <ejb-name>OrderLookupSessionBean</ejb-name>
+    <jndi-name>ordervault.OrderLookupHome</jndi-name>
+    <!--
+      This JNDI name is what OrderDAO / other services would look up via
+      InitialContext.lookup(). It's hardcoded across ~6 other call sites in
+      the broader codebase (not all shown in this snapshot) — a concrete
+      example of the "tight coupling to WebLogic" risk noted in
+      architecture-overview.md, since migrating off WebLogic means finding
+      and updating every one of those lookups.
+    -->
+    <reference-descriptor>
+      <resource-description>
+        <res-ref-name>jdbc/OrderVaultDS</res-ref-name>
+        <jndi-name>ordervault.jdbc.PrimaryDS</jndi-name>
+      </resource-description>
+    </reference-descriptor>
+  </weblogic-enterprise-bean>
+</weblogic-ejb-jar>

@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OrderVault :: InventoryCheckService
+  SYNTHETIC / FICTIONAL SPEC — created as test data for a portfolio project.
+  Not a real company's API.
+-->
+<definitions name="InventoryCheckService"
+             targetNamespace="http://ordervault.example.com/inventory/"
+             xmlns="http://schemas.xmlsoap.org/wsdl/"
+             xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+             xmlns:tns="http://ordervault.example.com/inventory/"
+             xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+
+  <types>
+    <xsd:schema targetNamespace="http://ordervault.example.com/inventory/">
+
+      <xsd:element name="CheckStockRequest">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="sku" type="xsd:string"/>
+            <xsd:element name="warehouseId" type="xsd:string" minOccurs="0"/>
+            <!-- if warehouseId omitted, aggregates across all warehouses -->
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+      <xsd:element name="CheckStockResponse">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="sku" type="xsd:string"/>
+            <xsd:element name="availableQuantity" type="xsd:int"/>
+            <xsd:element name="reservedQuantity" type="xsd:int"/>
+            <xsd:element name="warehouseBreakdown" type="tns:WarehouseStock" minOccurs="0" maxOccurs="unbounded"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+      <xsd:complexType name="WarehouseStock">
+        <xsd:sequence>
+          <xsd:element name="warehouseId" type="xsd:string"/>
+          <xsd:element name="quantity" type="xsd:int"/>
+        </xsd:sequence>
+      </xsd:complexType>
+
+      <xsd:element name="ReserveStockRequest">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="sku" type="xsd:string"/>
+            <xsd:element name="quantity" type="xsd:int"/>
+            <xsd:element name="orderId" type="xsd:string"/>
+            <!-- reservation is synchronous and BLOCKING — this is a known
+                 bottleneck during flash sales; see architecture-overview.md -->
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+      <xsd:element name="ReserveStockResponse">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="reservationId" type="xsd:string"/>
+            <xsd:element name="success" type="xsd:boolean"/>
+            <xsd:element name="failureReason" type="xsd:string" minOccurs="0"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+    </xsd:schema>
+  </types>
+
+  <message name="CheckStockInput">
+    <part name="parameters" element="tns:CheckStockRequest"/>
+  </message>
+  <message name="CheckStockOutput">
+    <part name="parameters" element="tns:CheckStockResponse"/>
+  </message>
+  <message name="ReserveStockInput">
+    <part name="parameters" element="tns:ReserveStockRequest"/>
+  </message>
+  <message name="ReserveStockOutput">
+    <part name="parameters" element="tns:ReserveStockResponse"/>
+  </message>
+
+  <portType name="InventoryCheckPortType">
+    <operation name="CheckStock">
+      <input message="tns:CheckStockInput"/>
+      <output message="tns:CheckStockOutput"/>
+    </operation>
+    <operation name="ReserveStock">
+      <input message="tns:ReserveStockInput"/>
+      <output message="tns:ReserveStockOutput"/>
+    </operation>
+  </portType>
+
+  <binding name="InventoryCheckBinding" type="tns:InventoryCheckPortType">
+    <soap:binding transport="http://schemas.xmlsoap.org/soap/http" style="document"/>
+    <operation name="CheckStock">
+      <soap:operation soapAction="http://ordervault.example.com/inventory/CheckStock"/>
+      <input><soap:body use="literal"/></input>
+      <output><soap:body use="literal"/></output>
+    </operation>
+    <operation name="ReserveStock">
+      <soap:operation soapAction="http://ordervault.example.com/inventory/ReserveStock"/>
+      <input><soap:body use="literal"/></input>
+      <output><soap:body use="literal"/></output>
+    </operation>
+  </binding>
+
+  <service name="InventoryCheckService">
+    <port name="InventoryCheckPort" binding="tns:InventoryCheckBinding">
+      <soap:address location="http://ordervault-internal.example.com:7001/InventoryCheckService"/>
+    </port>
+  </service>
+
+</definitions>

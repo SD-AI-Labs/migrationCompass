@@ -1,0 +1,91 @@
+server:
+  port: 8083   # chat-module=8080, tools-module=8081, rag-module=8082, agent-module=8083
+
+spring:
+  application:
+    name: agent-module
+
+  # Lets Docker-secrets-mounted files at /run/secrets/ be read as
+  # regular properties (filename = property key, content = value) —
+  # e.g. a file at /run/secrets/DEEPSEEK_API_KEY becomes the property
+  # DEEPSEEK_API_KEY, so every ${DEEPSEEK_API_KEY} reference below
+  # keeps working unchanged. 'optional:' so local dev (no secrets
+  # mounted, just .env/./run.sh) doesn't fail on a missing directory.
+  # An OS/.env-supplied env var still takes precedence if both exist
+  # (see docker-compose.yml's SECRETS comment for the full picture).
+  config:
+    import: "optional:configtree:/run/secrets/"
+
+  threads:
+    # Backs @Async execution (MigrationPlanningOrchestrator.executeRunAsync)
+    # with virtual threads — ideal here since pipeline execution is almost
+    # entirely I/O-bound (waiting on LLM API calls and HTTP calls to
+    # rag-module/tools-module), not CPU-bound. Requires Java 21+ (we're on
+    # 21) and Spring Boot 3.2+ (we're on 4.1.0).
+    virtual:
+      enabled: true
+
+  autoconfigure:
+    exclude:
+      # Same reasoning as every other module: 'common' pulls in both
+      # DeepSeek and Ollama starters. This module only needs DeepSeek for
+      # chat/agents — it never touches embeddings directly (that's
+      # rag-module's job; this module calls rag-module over HTTP instead).
+      - org.springframework.ai.model.ollama.autoconfigure.OllamaChatAutoConfiguration
+
+  ai:
+    deepseek:
+      api-key: ${DEEPSEEK_API_KEY}
+      chat:
+        options:
+          model: deepseek-chat   # required for tool calling (Discovery/Risk agents both use tools)
+
+  # Same Postgres instance as rag-module — see docker-compose.yml at the
+  # project root. Different tables (projects, analysis_runs vs.
+  # vector_store), same database, shared via persistence-module.
+  datasource:
+    url: jdbc:postgresql://localhost:5432/migration_advisor
+    username: postgres
+    password: postgres
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+
+# URLs for the other running services this module composes as agent tools.
+# Both must be running for the full pipeline (POST /api/agent/analyze) —
+# see this module's section of the root README for startup order.
+#
+# NOTE: agent-module no longer reads any local filesystem path for
+# ground-truth/grounding data — GroundTruthComparisonService fetches it
+# via GET {rag-module-url}/api/rag/grounding instead, so this module stays
+# fully decoupled from where/how grounding docs are stored (uploaded via
+# rag-module's endpoints, not passed to agent-module directly).
+ordervault:
+  services:
+    rag-module-url: http://localhost:8082
+    tools-module-url: http://localhost:8081
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0   # trace every request — fine for a demo/portfolio project; reduce in anything resembling production
+    export:
+      zipkin:
+        endpoint: ${ZIPKIN_ENDPOINT:http://localhost:9411/api/v2/spans}   # overridden to http://zipkin:9411/... in docker-compose.yml
+
+logging:
+  pattern:
+    # %X{correlationId} is our own app-level correlation ID (see
+    # CorrelationIdFilter); %X{traceId}/%X{spanId} are Micrometer's
+    # distributed-tracing IDs (see management.tracing.* below) — the two
+    # are independent mechanisms kept side by side deliberately: ours is a
+    # simple one-ID-per-user-action identifier useful without any tracing
+    # backend running, Micrometer's is the OTel/Zipkin-standard mechanism
+    # that actually populates the Zipkin UI's trace view.
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{correlationId:-none}] [trace=%X{traceId:-none} span=%X{spanId:-none}] %logger{36} - %msg%n"
+  level:
+    org.springframework.ai: INFO
+    org.springframework.ai.chat.client.advisor: DEBUG
+    com.migrationadvisor.agent: DEBUG

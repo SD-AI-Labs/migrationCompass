@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OrderVault :: OrderLookupService
+  SYNTHETIC / FICTIONAL SPEC — created as test data for a portfolio project.
+  Not a real company's API.
+-->
+<definitions name="OrderLookupService"
+             targetNamespace="http://ordervault.example.com/orderlookup/"
+             xmlns="http://schemas.xmlsoap.org/wsdl/"
+             xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+             xmlns:tns="http://ordervault.example.com/orderlookup/"
+             xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+
+  <types>
+    <xsd:schema targetNamespace="http://ordervault.example.com/orderlookup/">
+
+      <xsd:element name="GetOrderStatusRequest">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="orderId" type="xsd:string"/>
+            <xsd:element name="customerId" type="xsd:string"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+      <xsd:element name="GetOrderStatusResponse">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="orderId" type="xsd:string"/>
+            <xsd:element name="status" type="xsd:string"/>
+            <!-- status values: PLACED, PROCESSING, SHIPPED, DELIVERED, CANCELLED -->
+            <xsd:element name="lastUpdated" type="xsd:dateTime"/>
+            <xsd:element name="estimatedDeliveryDate" type="xsd:date" minOccurs="0"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+      <xsd:element name="GetOrderHistoryRequest">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="customerId" type="xsd:string"/>
+            <xsd:element name="fromDate" type="xsd:date" minOccurs="0"/>
+            <xsd:element name="toDate" type="xsd:date" minOccurs="0"/>
+            <xsd:element name="maxResults" type="xsd:int" minOccurs="0"/>
+            <!-- NOTE: undocumented behavior — if omitted, defaults to 50,
+                 but legacy clients often assume unlimited results. This has
+                 caused confusion in the past ("why am I missing orders?"). -->
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+      <xsd:element name="GetOrderHistoryResponse">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="orders" type="tns:OrderSummary" minOccurs="0" maxOccurs="unbounded"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+      <xsd:complexType name="OrderSummary">
+        <xsd:sequence>
+          <xsd:element name="orderId" type="xsd:string"/>
+          <xsd:element name="orderDate" type="xsd:date"/>
+          <xsd:element name="status" type="xsd:string"/>
+          <xsd:element name="totalAmount" type="xsd:decimal"/>
+        </xsd:sequence>
+      </xsd:complexType>
+
+      <xsd:element name="GetOrderDetailRequest">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="orderId" type="xsd:string"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+      <xsd:element name="GetOrderDetailResponse">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="orderId" type="xsd:string"/>
+            <xsd:element name="lineItems" type="tns:LineItem" minOccurs="0" maxOccurs="unbounded"/>
+            <xsd:element name="shippingAddress" type="xsd:string"/>
+            <xsd:element name="paymentMethod" type="xsd:string"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+      <xsd:complexType name="LineItem">
+        <xsd:sequence>
+          <xsd:element name="sku" type="xsd:string"/>
+          <xsd:element name="quantity" type="xsd:int"/>
+          <xsd:element name="unitPrice" type="xsd:decimal"/>
+        </xsd:sequence>
+      </xsd:complexType>
+
+    </xsd:schema>
+  </types>
+
+  <message name="GetOrderStatusInput">
+    <part name="parameters" element="tns:GetOrderStatusRequest"/>
+  </message>
+  <message name="GetOrderStatusOutput">
+    <part name="parameters" element="tns:GetOrderStatusResponse"/>
+  </message>
+
+  <message name="GetOrderHistoryInput">
+    <part name="parameters" element="tns:GetOrderHistoryRequest"/>
+  </message>
+  <message name="GetOrderHistoryOutput">
+    <part name="parameters" element="tns:GetOrderHistoryResponse"/>
+  </message>
+
+  <message name="GetOrderDetailInput">
+    <part name="parameters" element="tns:GetOrderDetailRequest"/>
+  </message>
+  <message name="GetOrderDetailOutput">
+    <part name="parameters" element="tns:GetOrderDetailResponse"/>
+  </message>
+
+  <portType name="OrderLookupPortType">
+    <operation name="GetOrderStatus">
+      <input message="tns:GetOrderStatusInput"/>
+      <output message="tns:GetOrderStatusOutput"/>
+    </operation>
+    <operation name="GetOrderHistory">
+      <input message="tns:GetOrderHistoryInput"/>
+      <output message="tns:GetOrderHistoryOutput"/>
+    </operation>
+    <operation name="GetOrderDetail">
+      <input message="tns:GetOrderDetailInput"/>
+      <output message="tns:GetOrderDetailOutput"/>
+    </operation>
+  </portType>
+
+  <binding name="OrderLookupBinding" type="tns:OrderLookupPortType">
+    <soap:binding transport="http://schemas.xmlsoap.org/soap/http" style="document"/>
+    <operation name="GetOrderStatus">
+      <soap:operation soapAction="http://ordervault.example.com/orderlookup/GetOrderStatus"/>
+      <input><soap:body use="literal"/></input>
+      <output><soap:body use="literal"/></output>
+    </operation>
+    <operation name="GetOrderHistory">
+      <soap:operation soapAction="http://ordervault.example.com/orderlookup/GetOrderHistory"/>
+      <input><soap:body use="literal"/></input>
+      <output><soap:body use="literal"/></output>
+    </operation>
+    <operation name="GetOrderDetail">
+      <soap:operation soapAction="http://ordervault.example.com/orderlookup/GetOrderDetail"/>
+      <input><soap:body use="literal"/></input>
+      <output><soap:body use="literal"/></output>
+    </operation>
+  </binding>
+
+  <service name="OrderLookupService">
+    <port name="OrderLookupPort" binding="tns:OrderLookupBinding">
+      <!-- fictional internal endpoint, not reachable -->
+      <soap:address location="http://ordervault-internal.example.com:7001/OrderLookupService"/>
+    </port>
+  </service>
+
+</definitions>

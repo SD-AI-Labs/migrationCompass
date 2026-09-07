@@ -1,0 +1,22 @@
+// 'persistence-module' is a plain library module (no Spring Boot plugin
+// here), like 'common' — it's a dependency of the runnable modules
+// (rag-module, agent-module), not runnable itself.
+apply plugin: 'java-library'
+apply plugin: 'io.spring.dependency-management'
+
+dependencies {
+    implementation platform('org.springframework.boot:spring-boot-dependencies:4.1.0')
+
+    // 'api' (not 'implementation') is used here deliberately — consumers
+    // of this module (rag-module, agent-module) directly reference
+    // JPA-annotated classes and Spring Data repository interfaces from
+    // this module in their own code, so those types need to be visible on
+    // the CONSUMER's compile classpath too, not just persistence-module's
+    // own. Requires the 'java-library' plugin for 'api' to be a valid
+    // configuration — see below.
+    api 'org.springframework.boot:spring-boot-starter-data-jpa'
+    api 'org.postgresql:postgresql'
+
+    compileOnly 'org.projectlombok:lombok:1.18.36'
+    annotationProcessor 'org.projectlombok:lombok:1.18.36'
+}

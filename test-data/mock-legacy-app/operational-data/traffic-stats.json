@@ -1,0 +1,46 @@
+{
+  "_comment": "SYNTHETIC data for portfolio project testing. Not real production data.",
+  "generatedFor": "OrderVault mock legacy system",
+  "periodDescription": "Typical week, non-peak season",
+  "services": [
+    {
+      "serviceName": "OrderLookupService",
+      "avgRequestsPerDay": 1250000,
+      "avgResponseTimeMs": 180,
+      "p99ResponseTimeMs": 950,
+      "errorRatePercent": 0.4,
+      "trafficSharePercent": 65,
+      "peakMultiplierDuringSales": 3.2
+    },
+    {
+      "serviceName": "InventoryCheckService",
+      "avgRequestsPerDay": 520000,
+      "avgResponseTimeMs": 240,
+      "p99ResponseTimeMs": 1800,
+      "errorRatePercent": 1.1,
+      "trafficSharePercent": 27,
+      "peakMultiplierDuringSales": 8.1,
+      "note": "ReserveStock operation is synchronous and blocking; p99 spikes heavily during flash sales due to DB row-lock contention"
+    },
+    {
+      "serviceName": "CustomerAccountService",
+      "avgRequestsPerDay": 145000,
+      "avgResponseTimeMs": 310,
+      "p99ResponseTimeMs": 2100,
+      "errorRatePercent": 0.6,
+      "trafficSharePercent": 7.5,
+      "peakMultiplierDuringSales": 1.4,
+      "note": "Lower volume but high complexity; RecalculateLoyaltyPoints operation is the slowest single call in the system"
+    },
+    {
+      "serviceName": "PartnerCatalogFeed",
+      "avgRequestsPerDay": 9500,
+      "avgResponseTimeMs": 95,
+      "p99ResponseTimeMs": 410,
+      "errorRatePercent": 0.2,
+      "trafficSharePercent": 0.5,
+      "peakMultiplierDuringSales": 1.1,
+      "note": "Low volume, single partner client; stock data can lag core inventory by 2-20 minutes (see PartnerCatalogFeed-openapi.yaml)"
+    }
+  ]
+}

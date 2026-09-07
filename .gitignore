@@ -1,0 +1,30 @@
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### IDE ###
+.idea/
+*.iws
+*.iml
+*.ipr
+.vscode/
+.settings/
+.project
+.classpath
+bin/
+
+### OS ###
+.DS_Store
+
+### Env / secrets ###
+.env
+*.local
+# The .example version stays tracked (it's just a placeholder) — only the
+# real generated file, once someone actually fills in a key, is ignored.
+secrets/DEEPSEEK_API_KEY
+
+### Logs ###
+*.log
+

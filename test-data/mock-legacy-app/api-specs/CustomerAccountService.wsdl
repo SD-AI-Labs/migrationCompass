@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OrderVault :: CustomerAccountService
+  SYNTHETIC / FICTIONAL SPEC — created as test data for a portfolio project.
+  Not a real company's API.
+
+  NOTE: This is the highest-risk service to migrate — see
+  architecture-overview.md and dependency-graph.md. Minimal test coverage,
+  most downstream dependents, handles PII.
+-->
+<definitions name="CustomerAccountService"
+             targetNamespace="http://ordervault.example.com/customeraccount/"
+             xmlns="http://schemas.xmlsoap.org/wsdl/"
+             xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+             xmlns:tns="http://ordervault.example.com/customeraccount/"
+             xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+
+  <types>
+    <xsd:schema targetNamespace="http://ordervault.example.com/customeraccount/">
+
+      <xsd:element name="GetCustomerProfileRequest">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="customerId" type="xsd:string"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+      <xsd:element name="GetCustomerProfileResponse">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="customerId" type="xsd:string"/>
+            <xsd:element name="fullName" type="xsd:string"/>
+            <xsd:element name="email" type="xsd:string"/>
+            <xsd:element name="loyaltyPoints" type="xsd:int"/>
+            <xsd:element name="loyaltyTier" type="xsd:string"/>
+            <!-- loyaltyTier calculation logic lives in a 400-line EJB method
+                 with no unit tests — flagged in architecture-overview.md as
+                 a specific migration risk area -->
+            <xsd:element name="addresses" type="tns:Address" minOccurs="0" maxOccurs="unbounded"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+      <xsd:complexType name="Address">
+        <xsd:sequence>
+          <xsd:element name="addressType" type="xsd:string"/>
+          <!-- values: SHIPPING, BILLING -->
+          <xsd:element name="line1" type="xsd:string"/>
+          <xsd:element name="line2" type="xsd:string" minOccurs="0"/>
+          <xsd:element name="city" type="xsd:string"/>
+          <xsd:element name="state" type="xsd:string"/>
+          <xsd:element name="postalCode" type="xsd:string"/>
+          <xsd:element name="isDefault" type="xsd:boolean"/>
+        </xsd:sequence>
+      </xsd:complexType>
+
+      <xsd:element name="UpdateAddressRequest">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="customerId" type="xsd:string"/>
+            <xsd:element name="address" type="tns:Address"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+      <xsd:element name="UpdateAddressResponse">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="success" type="xsd:boolean"/>
+            <xsd:element name="validationErrors" type="xsd:string" minOccurs="0" maxOccurs="unbounded"/>
+            <!-- address validation calls an external postal-verification
+                 service synchronously — no circuit breaker, no timeout
+                 configured. Flagged as an operational risk. -->
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+      <xsd:element name="RecalculateLoyaltyPointsRequest">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="customerId" type="xsd:string"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+      <xsd:element name="RecalculateLoyaltyPointsResponse">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="customerId" type="xsd:string"/>
+            <xsd:element name="newPointsBalance" type="xsd:int"/>
+            <xsd:element name="newTier" type="xsd:string"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+    </xsd:schema>
+  </types>
+
+  <message name="GetCustomerProfileInput">
+    <part name="parameters" element="tns:GetCustomerProfileRequest"/>
+  </message>
+  <message name="GetCustomerProfileOutput">
+    <part name="parameters" element="tns:GetCustomerProfileResponse"/>
+  </message>
+  <message name="UpdateAddressInput">
+    <part name="parameters" element="tns:UpdateAddressRequest"/>
+  </message>
+  <message name="UpdateAddressOutput">
+    <part name="parameters" element="tns:UpdateAddressResponse"/>
+  </message>
+  <message name="RecalculateLoyaltyPointsInput">
+    <part name="parameters" element="tns:RecalculateLoyaltyPointsRequest"/>
+  </message>
+  <message name="RecalculateLoyaltyPointsOutput">
+    <part name="parameters" element="tns:RecalculateLoyaltyPointsResponse"/>
+  </message>
+
+  <portType name="CustomerAccountPortType">
+    <operation name="GetCustomerProfile">
+      <input message="tns:GetCustomerProfileInput"/>
+      <output message="tns:GetCustomerProfileOutput"/>
+    </operation>
+    <operation name="UpdateAddress">
+      <input message="tns:UpdateAddressInput"/>
+      <output message="tns:UpdateAddressOutput"/>
+    </operation>
+    <operation name="RecalculateLoyaltyPoints">
+      <input message="tns:RecalculateLoyaltyPointsInput"/>
+      <output message="tns:RecalculateLoyaltyPointsOutput"/>
+    </operation>
+  </portType>
+
+  <binding name="CustomerAccountBinding" type="tns:CustomerAccountPortType">
+    <soap:binding transport="http://schemas.xmlsoap.org/soap/http" style="document"/>
+    <operation name="GetCustomerProfile">
+      <soap:operation soapAction="http://ordervault.example.com/customeraccount/GetCustomerProfile"/>
+      <input><soap:body use="literal"/></input>
+      <output><soap:body use="literal"/></output>
+    </operation>
+    <operation name="UpdateAddress">
+      <soap:operation soapAction="http://ordervault.example.com/customeraccount/UpdateAddress"/>
+      <input><soap:body use="literal"/></input>
+      <output><soap:body use="literal"/></output>
+    </operation>
+    <operation name="RecalculateLoyaltyPoints">
+      <soap:operation soapAction="http://ordervault.example.com/customeraccount/RecalculateLoyaltyPoints"/>
+      <input><soap:body use="literal"/></input>
+      <output><soap:body use="literal"/></output>
+    </operation>
+  </binding>
+
+  <service name="CustomerAccountService">
+    <port name="CustomerAccountPort" binding="tns:CustomerAccountBinding">
+      <soap:address location="http://ordervault-internal.example.com:7001/CustomerAccountService"/>
+    </port>
+  </service>
+
+</definitions>

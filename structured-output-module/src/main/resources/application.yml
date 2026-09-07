@@ -1,0 +1,68 @@
+server:
+  port: 8084   # chat=8080, tools=8081, rag=8082, agent=8083, report=8084
+
+spring:
+  application:
+    name: structured-output-module
+
+  # Lets Docker-secrets-mounted files at /run/secrets/ be read as
+  # regular properties (filename = property key, content = value) —
+  # e.g. a file at /run/secrets/DEEPSEEK_API_KEY becomes the property
+  # DEEPSEEK_API_KEY, so every ${DEEPSEEK_API_KEY} reference below
+  # keeps working unchanged. 'optional:' so local dev (no secrets
+  # mounted, just .env/./run.sh) doesn't fail on a missing directory.
+  # An OS/.env-supplied env var still takes precedence if both exist
+  # (see docker-compose.yml's SECRETS comment for the full picture).
+  config:
+    import: "optional:configtree:/run/secrets/"
+
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.model.ollama.autoconfigure.OllamaChatAutoConfiguration
+
+  ai:
+    deepseek:
+      api-key: ${DEEPSEEK_API_KEY}
+      chat:
+        options:
+          model: deepseek-chat
+
+  # Same Postgres instance as rag-module/agent-module — used here only to
+  # attach the generated structured report back onto the AnalysisRun
+  # agent-module already created (see FullPipelineReportService).
+  datasource:
+    url: jdbc:postgresql://localhost:5432/migration_advisor
+    username: postgres
+    password: postgres
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+
+ordervault:
+  services:
+    agent-module-url: http://localhost:8083
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0   # trace every request — fine for a demo/portfolio project; reduce in anything resembling production
+    export:
+      zipkin:
+        endpoint: ${ZIPKIN_ENDPOINT:http://localhost:9411/api/v2/spans}   # overridden to http://zipkin:9411/... in docker-compose.yml
+
+logging:
+  pattern:
+    # %X{correlationId} is our own app-level correlation ID (see
+    # CorrelationIdFilter); %X{traceId}/%X{spanId} are Micrometer's
+    # distributed-tracing IDs (see management.tracing.* below) — the two
+    # are independent mechanisms kept side by side deliberately: ours is a
+    # simple one-ID-per-user-action identifier useful without any tracing
+    # backend running, Micrometer's is the OTel/Zipkin-standard mechanism
+    # that actually populates the Zipkin UI's trace view.
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{correlationId:-none}] [trace=%X{traceId:-none} span=%X{spanId:-none}] %logger{36} - %msg%n"
+  level:
+    org.springframework.ai: INFO
+    org.springframework.ai.chat.client.advisor: DEBUG
+    com.migrationadvisor.report: DEBUG

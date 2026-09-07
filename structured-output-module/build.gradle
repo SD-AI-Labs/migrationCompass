@@ -1,0 +1,38 @@
+apply plugin: 'org.springframework.boot'
+apply plugin: 'io.spring.dependency-management'
+
+dependencies {
+    implementation project(':common')
+    implementation project(':persistence-module')
+
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    // Jackson ObjectMapper auto-configuration — explicitly ensure ObjectMapper
+    // bean is created since common module (library, no Spring Boot plugin) can't
+    // trigger it transitively
+    implementation 'org.springframework.boot:spring-boot-starter-json'
+    // Same fix as agent-module: 'common' only exposes its dependencies on
+    // the RUNTIME classpath to consumers, not COMPILE time. This module's
+    // code directly imports ChatClient, so it needs its own direct
+    // declaration.
+    implementation 'org.springframework.ai:spring-ai-starter-model-deepseek'
+
+    compileOnly 'org.projectlombok:lombok:1.18.36'
+    annotationProcessor 'org.projectlombok:lombok:1.18.36'
+
+    // Distributed tracing (Micrometer + Zipkin) — spring-boot-starter-zipkin
+    // (Boot 4.x) bundles the Brave tracing bridge + Zipkin reporter
+    // automatically, no separate micrometer-tracing-bridge-brave /
+    // zipkin-reporter-brave declarations needed. Spring AI's ChatClient
+    // calls are automatically instrumented once this is on the
+    // classpath — no extra code, just this dependency + application.yml
+    // config (see logging.level / management.tracing.* there).
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'org.springframework.boot:spring-boot-starter-zipkin'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+bootJar {
+    archiveFileName = 'structured-output-module.jar'
+}

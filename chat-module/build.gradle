@@ -1,0 +1,30 @@
+apply plugin: 'org.springframework.boot'
+apply plugin: 'io.spring.dependency-management'
+
+dependencies {
+    implementation project(':common')
+
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-webflux' // needed for streaming (SSE) responses
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.ai:spring-ai-starter-model-deepseek'
+
+    compileOnly 'org.projectlombok:lombok:1.18.36'
+    annotationProcessor 'org.projectlombok:lombok:1.18.36'
+
+    // Distributed tracing (Micrometer + Zipkin) — spring-boot-starter-zipkin
+    // (Boot 4.x) bundles the Brave tracing bridge + Zipkin reporter
+    // automatically, no separate micrometer-tracing-bridge-brave /
+    // zipkin-reporter-brave declarations needed. Spring AI's ChatClient
+    // calls are automatically instrumented once this is on the
+    // classpath — no extra code, just this dependency + application.yml
+    // config (see logging.level / management.tracing.* there).
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'org.springframework.boot:spring-boot-starter-zipkin'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+bootJar {
+    archiveFileName = 'chat-module.jar'
+}

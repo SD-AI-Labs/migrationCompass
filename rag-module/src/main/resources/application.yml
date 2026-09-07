@@ -1,0 +1,106 @@
+server:
+  port: 8082   # different from chat-module (8080) and tools-module (8081)
+
+spring:
+  application:
+    name: rag-module
+
+  # Lets Docker-secrets-mounted files at /run/secrets/ be read as
+  # regular properties (filename = property key, content = value) —
+  # e.g. a file at /run/secrets/DEEPSEEK_API_KEY becomes the property
+  # DEEPSEEK_API_KEY, so every ${DEEPSEEK_API_KEY} reference below
+  # keeps working unchanged. 'optional:' so local dev (no secrets
+  # mounted, just .env/./run.sh) doesn't fail on a missing directory.
+  # An OS/.env-supplied env var still takes precedence if both exist
+  # (see docker-compose.yml's SECRETS comment for the full picture).
+  config:
+    import: "optional:configtree:/run/secrets/"
+
+  autoconfigure:
+    exclude:
+      # Same reasoning as chat-module/tools-module: 'common' pulls in both
+      # DeepSeek and Ollama starters. We want DeepSeek for CHAT and Ollama
+      # for EMBEDDINGS — excluding Ollama's chat autoconfiguration keeps
+      # exactly that split (its embedding autoconfiguration is untouched).
+      - org.springframework.ai.model.ollama.autoconfigure.OllamaChatAutoConfiguration
+
+  ai:
+    deepseek:
+      api-key: ${DEEPSEEK_API_KEY}
+      chat:
+        options:
+          model: deepseek-chat
+
+    ollama:
+      base-url: http://localhost:11434   # default local Ollama server address
+      embedding:
+        options:
+          model: nomic-embed-text        # run `ollama pull nomic-embed-text` before starting this module
+
+    vectorstore:
+      pgvector:
+        # Creates the pgvector extension + vector_store table
+        # automatically on startup if they don't exist yet.
+        initialize-schema: true
+        table-name: vector_store
+        # nomic-embed-text (see ollama config above) produces 768-dimension
+        # embeddings — must match exactly or inserts will fail.
+        dimensions: 768
+
+  # Uploaded codebase zips can be a few MB — bump past Spring Boot's
+  # conservative defaults (1MB file / 10MB request).
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 60MB
+
+  # Postgres connection — see docker-compose.yml at the project root for a
+  # ready-to-run local instance (`docker compose up -d`). Shared with
+  # agent-module (same database, different tables) via persistence-module.
+  datasource:
+    url: jdbc:postgresql://localhost:5432/migration_advisor
+    username: postgres
+    password: postgres
+
+  jpa:
+    hibernate:
+      # 'update' auto-creates/updates the projects/analysis_runs tables
+      # from the JPA entities on startup — fine for a portfolio project;
+      # a production setup would use a real migration tool (Flyway/
+      # Liquibase) instead of relying on Hibernate to infer DDL.
+      ddl-auto: update
+    show-sql: false
+
+# Paths for the bundled OrderVault EXAMPLE project only (the zero-setup
+# "load example" convenience — see UploadController). Real/generic uploads
+# never use these paths; they go through POST /api/rag/upload/source and
+# /api/rag/upload/grounding instead. Relative to this module's working
+# directory (rag-module/ when run via ./run.sh :rag-module:bootRun from the
+# project root).
+ordervault:
+  rag:
+    example-project-path: ../test-data/mock-legacy-app
+    example-ground-truth-path: ../test-data/mock-legacy-app/ground-truth
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0   # trace every request — fine for a demo/portfolio project; reduce in anything resembling production
+    export:
+      zipkin:
+        endpoint: ${ZIPKIN_ENDPOINT:http://localhost:9411/api/v2/spans}   # overridden to http://zipkin:9411/... in docker-compose.yml
+
+logging:
+  pattern:
+    # %X{correlationId} is our own app-level correlation ID (see
+    # CorrelationIdFilter); %X{traceId}/%X{spanId} are Micrometer's
+    # distributed-tracing IDs (see management.tracing.* below) — the two
+    # are independent mechanisms kept side by side deliberately: ours is a
+    # simple one-ID-per-user-action identifier useful without any tracing
+    # backend running, Micrometer's is the OTel/Zipkin-standard mechanism
+    # that actually populates the Zipkin UI's trace view.
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{correlationId:-none}] [trace=%X{traceId:-none} span=%X{spanId:-none}] %logger{36} - %msg%n"
+  level:
+    org.springframework.ai: INFO   # DEBUG is very noisy during ingestion (one line per chunk embedded) — bump up if you need to troubleshoot
+    org.springframework.ai.chat.client.advisor: DEBUG   # narrower override so SimpleLoggerAdvisor's prompt/response logs show up despite the broader INFO level above
+    com.migrationadvisor.rag: DEBUG

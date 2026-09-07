@@ -1,0 +1,53 @@
+{
+  "_comment": "SYNTHETIC data for portfolio project testing. Not real production data.",
+  "generatedFor": "OrderVault mock legacy system",
+  "clusterStatus": "DEGRADED",
+  "services": [
+    {
+      "serviceName": "OrderLookupService",
+      "status": "HEALTHY",
+      "uptimePercent30d": 99.95,
+      "activeNodes": 12,
+      "totalNodes": 12,
+      "lastIncident": null
+    },
+    {
+      "serviceName": "InventoryCheckService",
+      "status": "DEGRADED",
+      "uptimePercent30d": 99.2,
+      "activeNodes": 11,
+      "totalNodes": 12,
+      "lastIncident": {
+        "date": "2026-08-12",
+        "summary": "ReserveStock operation timed out under load during a flash promotion; one WebLogic node required manual restart",
+        "durationMinutes": 34
+      }
+    },
+    {
+      "serviceName": "CustomerAccountService",
+      "status": "HEALTHY",
+      "uptimePercent30d": 99.8,
+      "activeNodes": 12,
+      "totalNodes": 12,
+      "lastIncident": {
+        "date": "2026-07-29",
+        "summary": "Address validation external dependency timeout caused elevated error rate for ~15 minutes; no circuit breaker in place",
+        "durationMinutes": 15
+      }
+    },
+    {
+      "serviceName": "PartnerCatalogFeed",
+      "status": "HEALTHY",
+      "uptimePercent30d": 99.99,
+      "activeNodes": 2,
+      "totalNodes": 2,
+      "lastIncident": null
+    }
+  ],
+  "database": {
+    "instanceName": "ordervault-primary-ora11g",
+    "status": "HEALTHY",
+    "connectionPoolUtilizationPercent": 78,
+    "note": "No read replicas; all 12 WebLogic nodes connect directly to this single primary instance"
+  }
+}

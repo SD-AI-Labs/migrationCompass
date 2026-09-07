@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SYNTHETIC legacy code — fictional portfolio test data, not a real system. -->
+<ejb-jar>
+  <enterprise-beans>
+    <message-driven>
+      <ejb-name>OrderConfirmationMessageListenerBean</ejb-name>
+      <ejb-class>com.ordervault.messaging.OrderConfirmationMessageListener</ejb-class>
+      <transaction-type>Container</transaction-type>
+      <message-driven-destination>
+        <destination-type>javax.jms.Queue</destination-type>
+      </message-driven-destination>
+    </message-driven>
+
+    <message-driven>
+      <ejb-name>WarehousePickListenerBean</ejb-name>
+      <ejb-class>com.ordervault.messaging.WarehousePickListener</ejb-class>
+      <transaction-type>Container</transaction-type>
+      <message-driven-destination>
+        <destination-type>javax.jms.Queue</destination-type>
+      </message-driven-destination>
+    </message-driven>
+  </enterprise-beans>
+</ejb-jar>

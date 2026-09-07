@@ -1,0 +1,245 @@
+# Full containerized stack: Postgres+pgvector, Ollama (with the embedding
+# model auto-pulled), and all 5 Spring Boot modules, all on Docker's
+# default bridge network so they resolve each other by service name
+# (e.g. rag-module can be reached at http://rag-module:8082 from other
+# containers — no "localhost" involved between containers).
+#
+# Usage:
+#   cp .env.example .env                                       # fill in your real DEEPSEEK_API_KEY first
+#   cp secrets/DEEPSEEK_API_KEY.example secrets/DEEPSEEK_API_KEY  # REQUIRED even if you're only using .env below — see SECRETS note
+#   docker compose up -d --build
+#   docker compose logs -f agent-module    # tail one service's logs
+#   docker compose down                    # stop (data persists)
+#   docker compose down -v                 # stop AND wipe all data/models
+#
+# SECRETS: two supported ways to supply DEEPSEEK_API_KEY, and they can
+# coexist safely — an OS/`.env`-supplied environment variable always wins
+# over the file-based secret below (Spring Boot's env vars outrank
+# spring.config.import-sourced properties), so nothing breaks if both are
+# present. The `cp secrets/DEEPSEEK_API_KEY.example ...` step above is
+# REQUIRED regardless of which one you actually use — Docker Compose
+# (outside Swarm) has no "optional secret" support, so the file must
+# exist for `docker compose up` to start at all, even if you're only
+# using `.env` and leaving the secret file as its placeholder content.
+# To actually SWITCH to the file-based secret instead of `.env`:
+#   1. put your real key in secrets/DEEPSEEK_API_KEY (already copied above)
+#   2. remove/comment out DEEPSEEK_API_KEY from .env
+# Reading it as a mounted file rather than an env var means it's not
+# visible via `docker inspect`/`/proc/<pid>/environ` the way env vars are.
+# See each module's application.yml (spring.config.import) and the
+# `secrets:` block below.
+#
+# NOTE: this is an alternative to running modules individually via
+# ./run.sh — use one approach or the other, not both at once (port
+# conflicts otherwise, since both bind the same host ports).
+#
+# First build will be slow (~5-10 min): each module's image runs a full
+# Gradle build inside its build stage, and Ollama needs to download the
+# embedding model. Subsequent builds are much faster (Docker layer cache).
+
+secrets:
+  # Filename on the host doesn't need to match the in-container mount
+  # name — but each module's application.yml expects the mounted file to
+  # be named exactly DEEPSEEK_API_KEY (spring.config.import's configtree:
+  # mechanism uses the filename as the property key), so this secret is
+  # deliberately declared with that same name to keep the mount path
+  # matching regardless of what the host-side file happens to be called.
+  DEEPSEEK_API_KEY:
+    file: ./secrets/DEEPSEEK_API_KEY
+
+services:
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: migration_advisor
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - migration-advisor-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  ollama:
+    image: ollama/ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - migration-advisor-ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-off job: pulls the embedding model into the shared 'ollama' volume,
+  # then exits. rag-module waits for this to complete successfully before
+  # starting (see its depends_on below) — without this, the first RAG
+  # ingestion would fail with "model not found."
+  ollama-init:
+    image: ollama/ollama
+    environment:
+      OLLAMA_HOST: ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["ollama", "pull", "nomic-embed-text"]
+
+  zipkin:
+    image: openzipkin/zipkin
+    ports:
+      - "9411:9411"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9411/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  chat-module:
+    build:
+      context: .
+      args:
+        MODULE: chat-module
+    ports:
+      - "8080:8080"
+    env_file: .env
+    secrets:
+      - DEEPSEEK_API_KEY
+    environment:
+      SPRING_AUTOCONFIGURE_EXCLUDE: org.springframework.ai.model.ollama.autoconfigure.OllamaChatAutoConfiguration,org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration,org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+    depends_on:
+      zipkin:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  tools-module:
+    build:
+      context: .
+      args:
+        MODULE: tools-module
+    ports:
+      - "8081:8081"
+    env_file: .env
+    secrets:
+      - DEEPSEEK_API_KEY
+    environment:
+      SPRING_AUTOCONFIGURE_EXCLUDE: org.springframework.ai.model.ollama.autoconfigure.OllamaChatAutoConfiguration,org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration,org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+    depends_on:
+      zipkin:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  rag-module:
+    build:
+      context: .
+      args:
+        MODULE: rag-module
+    ports:
+      - "8082:8082"
+    env_file: .env
+    secrets:
+      - DEEPSEEK_API_KEY
+    environment:
+      SPRING_AUTOCONFIGURE_EXCLUDE: org.springframework.ai.model.ollama.autoconfigure.OllamaChatAutoConfiguration
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+      # Overrides application.yml's localhost defaults with container DNS
+      # names — Spring Boot's relaxed binding picks these up automatically,
+      # no YAML changes needed.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/migration_advisor
+      SPRING_AI_OLLAMA_BASE_URL: http://ollama:11434
+      # Container path differs from local dev's "../test-data/..." relative
+      # path (that's relative to rag-module/ as the working directory when
+      # run via ./run.sh — inside the container, the working directory is
+      # /app and test-data was copied to /app/test-data, see Dockerfile).
+      ORDERVAULT_RAG_EXAMPLE_PROJECT_PATH: /app/test-data/mock-legacy-app
+      ORDERVAULT_RAG_EXAMPLE_GROUND_TRUTH_PATH: /app/test-data/mock-legacy-app/ground-truth
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+      zipkin:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  agent-module:
+    build:
+      context: .
+      args:
+        MODULE: agent-module
+    ports:
+      - "8083:8083"
+    env_file: .env
+    secrets:
+      - DEEPSEEK_API_KEY
+    environment:
+      SPRING_AUTOCONFIGURE_EXCLUDE: org.springframework.ai.model.ollama.autoconfigure.OllamaChatAutoConfiguration
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/migration_advisor
+      ORDERVAULT_SERVICES_RAG_MODULE_URL: http://rag-module:8082
+      ORDERVAULT_SERVICES_TOOLS_MODULE_URL: http://tools-module:8081
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rag-module:
+        condition: service_healthy
+      tools-module:
+        condition: service_healthy
+      zipkin:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  structured-output-module:
+    build:
+      context: .
+      args:
+        MODULE: structured-output-module
+    ports:
+      - "8084:8084"
+    env_file: .env
+    secrets:
+      - DEEPSEEK_API_KEY
+    environment:
+      SPRING_AUTOCONFIGURE_EXCLUDE: org.springframework.ai.model.ollama.autoconfigure.OllamaChatAutoConfiguration
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/migration_advisor
+      ORDERVAULT_SERVICES_AGENT_MODULE_URL: http://agent-module:8083
+    depends_on:
+      postgres:
+        condition: service_healthy
+      agent-module:
+        condition: service_healthy
+      zipkin:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8084/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  migration-advisor-pgdata:
+  migration-advisor-ollama:

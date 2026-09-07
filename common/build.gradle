@@ -1,0 +1,26 @@
+// 'common' is a plain library module (no Spring Boot plugin here) —
+// it's a dependency of the runnable modules like chat-module, not runnable itself.
+apply plugin: 'io.spring.dependency-management'
+
+dependencies {
+    implementation platform('org.springframework.boot:spring-boot-dependencies:4.1.0')
+
+    implementation 'org.springframework.boot:spring-boot-starter'
+    implementation 'org.springframework.ai:spring-ai-starter-model-deepseek'
+    implementation 'org.springframework.ai:spring-ai-starter-model-ollama'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
+
+    // compileOnly: only needed so CorrelationIdFilter/Interceptor (in the
+    // logging package below) compile against Servlet/RestClient types.
+    // Every consuming module already declares spring-boot-starter-web
+    // directly (needed for their own compile classpath, same lesson as
+    // spring-ai-starter-model-deepseek elsewhere in this project), so this
+    // doesn't need to be exposed further — it's real at runtime via each
+    // module's own direct dependency, not through this one.
+    compileOnly 'org.springframework.boot:spring-boot-starter-web'
+
+    compileOnly 'org.projectlombok:lombok:1.18.36'
+    annotationProcessor 'org.projectlombok:lombok:1.18.36'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
