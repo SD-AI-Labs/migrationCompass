@@ -1,0 +1,297 @@
+# Project Plan — Legacy API Migration Advisor V2
+
+_Status: planning complete, implementation not started. This document is
+the source of truth for the rewrite — read it before writing any V2 code._
+
+## Why a rewrite, not an iteration
+
+V1 (now in `v1/`, see its own README) was built module-by-module to
+demonstrate each Spring AI capability in isolation — RAG, tool calling,
+multi-agent orchestration, structured output — as five separate Spring
+Boot microservices, each with its own port, its own `ChatClient` config,
+its own README section.
+
+That was the right way to *build* it, and it's a legitimate, defensible
+architecture on its own terms. But it produced the wrong *product*: the
+dashboard's navigation ended up mirroring the five backend services
+one-to-one (Chat tab, RAG Q&A tab, Tools Chat tab, Agent Pipeline tab,
+Reports tab), which means the user has to understand the *backend's*
+organizing principle to use the product at all. Specifically:
+
+- **Chat and RAG Q&A are the same job from a user's perspective** ("ask
+  something about my code") but `chat-module` has zero RAG or tool
+  access — it's a bare conversational agent, so asking it about the
+  uploaded project either hallucinates or deflects. Two tabs, one looks
+  broken.
+- **Agent Pipeline and Reports overlap** — both can trigger a full
+  analysis run, both show a view of the same run's output, with no single
+  place that represents "the analysis" as one artifact.
+- **Tools Chat exposes an implementation technique (function calling) as
+  if it were a peer user journey** — nobody wants to "chat with the
+  monitoring data"; they want risk scoring that happens to be informed by
+  real operational signals.
+
+Root cause: the IA was organized around backend module boundaries
+instead of the user's actual jobs-to-be-done. Fixing that is a product
+rethink, not a bug fix — hence a rewrite rather than a patch.
+
+## What's NOT changing
+
+The underlying AI engineering — this is still the point of the whole
+project — carries forward conceptually, re-architected around a coherent
+product instead of five standalone demos:
+
+- RAG over an uploaded codebase (multi-query expansion, reranking,
+  code-aware chunking — the techniques from V1's advanced RAG round)
+- Multi-agent orchestration with tool calling, self-critique/refinement
+  loops, and agents sharing tools with each other
+- Structured output extraction (the scoring rubric below is a NEW,
+  bigger version of this same idea)
+- Operational-data-informed risk assessment (logs, health/traffic,
+  incidents — V1's tools-module concept, reframed as a data source
+  instead of a chat surface)
+- Multi-project support, duplicate detection, everything V1 built around
+  "any codebase, not just the bundled example"
+
+## Product vision
+
+**One continuous page per project, not tabs.** The interaction model
+serves two personas without making either of them pick a mode:
+
+- **The fast path** ("just tell me"): upload, wait, see five headline
+  scores. Done, if that's all they want.
+- **The deep path** ("let me dig in"): every score, card, and finding is
+  a jumping-off point to expand for detail or ask a follow-up — inline,
+  never a page navigation.
+
+Nothing is ever a dead end that forces a destination change. The
+assistant (ask bar) is always present, not a tab you go to.
+
+### The five-score scorecard
+
+The headline artifact: **Migration Readiness, Risk, Effort, Cost, Time**
+— glanceable the moment analysis completes.
+
+**Scores are rubric-based, computed over the structured findings we
+already extract — NOT a separate LLM call producing an opaque number.**
+This was a deliberate choice: an LLM-generated score has no traceable
+"why," which is fatal for something meant to feel enterprise-credible.
+A documented rubric applied to real structured findings (per-service risk
+levels, phased-plan length, service count, etc.) means every score has a
+decomposable answer to "why is this 62?" — actual math over real data,
+not a vibe.
+
+- **Risk** — weighted aggregate of per-service risk levels already in the
+  structured report.
+- **Effort** — function of service count, phased-plan length, and
+  complexity signals from the findings (untested code, tight coupling,
+  etc.).
+- **Cost / Time** — derived from Effort via documented assumptions (team
+  size, rate) — explicitly presented as assumptions the user can see and
+  adjust, not hidden constants.
+- **Migration Readiness** — a rollup of the above plus data-quality/
+  architecture-soundness signals from Discovery's findings.
+
+This is a genuinely new piece of domain logic V1 never had — V1 stopped
+at per-service risk levels and a narrative; V2 adds the aggregation layer
+that turns findings into a decision-ready summary.
+
+### Code-only vs. refined — operational data enrichment
+
+Every score ships with a visible confidence signal: **"code-only
+estimate"** by default. Two clearly separated kinds of enrichment, not
+conflated:
+
+- **Operational data** (objective facts about the running system: logs,
+  incident reports, performance/health metrics, DB size/stats) —
+  sharpens Risk (real failure history beats static code smell) and
+  Cost/Effort (DB migration complexity scales with actual data volume).
+- **Migration parameters** (business assumptions, not files: target
+  environment — cloud vs. on-prem/provider, team size, budget/timeline
+  constraints) — a handful of form inputs that directly parameterize the
+  Cost/Time conversion math.
+
+**Never gates the fast path.** Offered at two points, both optional:
+
+1. At upload — a collapsed "Add operational data for more accurate
+   results" section on the same screen, one click to expand, fully
+   ignorable.
+2. On the scorecard itself — a "Refine these estimates" action next to
+   the confidence tag, for someone who saw the fast result and wants to
+   improve it afterward (the more common real pattern).
+
+**Recalculation split**: adding operational data triggers an immediate,
+free rubric recalculation (no LLM call — just re-running the formula with
+better inputs) for instant feedback. The narrative findings/risk cards
+stay as-is until the user explicitly re-runs the full agent pipeline
+(the expensive, LLM-driven part) — cheap feedback loop stays instant,
+costly work stays an explicit action.
+
+## New tech stack
+
+| Concern | V1 | V2 |
+|---|---|---|
+| Language/runtime | Java 21 / Spring Boot | TypeScript / Node.js |
+| App framework | 5x Spring Boot services | Next.js (single app) |
+| AI/agent orchestration | Spring AI | Vercel AI SDK + LangGraph.js |
+| API layer | 5x separate REST APIs | tRPC (or Next.js Server Actions) — one app, no cross-service HTTP |
+| Database access | Spring Data JPA | Drizzle ORM |
+| Vector storage | pgvector via Spring AI's PgVectorStore | pgvector, same Postgres, via Drizzle |
+| Tracing instrumentation | Micrometer + hand-rolled correlation-ID filter | OpenTelemetry SDK (trace ID doubles as the correlation ID — no separate mechanism needed) |
+| Tracing backend/UI | Zipkin (separate Docker container) | Spans written to the same Postgres DB; a `/admin/traces` route inside the app renders the waterfall — no extra infrastructure |
+| Deployment shape | 5 containers + Postgres + Ollama + Zipkin | One Next.js app + Postgres (+ Ollama for local embeddings) |
+
+### Why this over the alternatives considered
+
+- **Python/FastAPI** was the other strong contender — clean, dominant
+  AI/ML ecosystem language — but it overlaps with the language used
+  elsewhere in the existing portfolio (DocRAG, GraphForge,
+  Intelli-Market), adding less breadth than a third distinct language.
+- **Go** has a thin agent-orchestration ecosystem (no mature
+  LangGraph-equivalent) — would mean hand-rolling orchestration that
+  comes free elsewhere, for a product that's fundamentally
+  orchestration-heavy.
+- **Next.js + Vercel AI SDK** won specifically because the *product* we
+  designed is streaming- and UI-heavy by nature (always-present ask bar,
+  live agent reasoning trace, progressive disclosure) — exactly where
+  the AI SDK's primitives (`useChat`, `streamText`, tool-call visibility)
+  are purpose-built, and one Next.js app naturally produces the "one
+  continuous page" IA instead of fighting against a multi-origin SPA the
+  way V1's dashboard had to.
+
+### Honest tradeoff being accepted
+
+V1's "5 independently-deployable microservices with distributed tracing"
+interview story goes away. Both agreed this isn't the right architecture
+for this *kind* of product anyway — a single cohesive app is a different
+engineering story (clean full-stack AI product), not a lesser one, and
+it's the more honest fit for what got designed.
+
+### Tracing design detail
+
+OpenTelemetry spans (HTTP request → agent step → individual LLM call →
+DB query) get written to Postgres instead of exported to a separate
+Zipkin container. A simple `/admin/traces` page in the same Next.js app
+reads that table and renders a trace waterfall. Since there's no longer a
+cross-service hop to correlate (one process now, not five), Zipkin's core
+value proposition mostly doesn't apply here anyway. Structured logging
+via `pino`, with the OTel trace ID injected into every log line, so a
+trace and its corresponding logs are directly cross-referenceable.
+
+Tradeoff accepted deliberately: losing Zipkin's mature UI (flame graphs,
+service maps) in exchange for something simpler and self-contained. Since
+OTel is the instrumentation layer regardless, swapping in a real backend
+later (Grafana Tempo, Honeycomb) is a config change to the exporter, not
+a rewrite of how spans get created — worth a line in interview
+conversation as "here's how this scales toward production observability"
+even though the simple version is the actual build.
+
+## Architecture (high level)
+
+```
+┌─────────────────────────────────────────────────────┐
+│                  Next.js app (single)                │
+│                                                        │
+│  UI: one continuous project page                      │
+│    - scorecard (Layer 1)                               │
+│    - findings/risk cards (Layer 2)                      │
+│    - narrative + phased plan, expandable (Layer 3)       │
+│    - persistent ask bar (Layer 4)                          │
+│                                                        │
+│  tRPC / Server Actions (in-process, no cross-service HTTP)│
+│    - project ingestion & RAG (multi-query + rerank)     │
+│    - agent orchestration (LangGraph.js)                │
+│       - Discovery / Architecture / Risk / Comparison   │
+│         agents, tool-sharing + self-critique carried    │
+│         forward conceptually from V1                     │
+│    - scoring rubric engine (new)                       │
+│    - operational-data ingestion + parameter form        │
+│                                                        │
+│  OTel spans → Postgres  │  pino logs (trace-ID tagged) │
+└─────────────────────────────────────────────────────┘
+              │                           │
+         PostgreSQL                    Ollama
+     (app data + pgvector          (local embeddings,
+      + trace spans)                 unchanged from V1)
+```
+
+## Build phases (proposed — not yet started)
+
+1. **Scaffold**: Next.js app, Drizzle schema (projects, analysis runs,
+   scores, trace spans), OTel wiring, Postgres/pgvector setup, Ollama
+   connection.
+2. **Ingestion**: project upload, chunking, embedding, duplicate
+   detection — porting V1's proven logic to Drizzle/TS.
+3. **RAG + Ask**: retrieval pipeline (multi-query expansion + reranking,
+   carried forward from V1's advanced round), the persistent ask-bar UI.
+4. **Agent orchestration**: LangGraph.js port of Discovery/Architecture/
+   Risk/Comparison, tool-sharing, bounded self-critique.
+5. **Scoring engine**: the rubric — the genuinely new piece — plus the
+   scorecard UI (Layer 1) and drill-down (Layers 2-3).
+6. **Operational data + refinement**: optional enrichment at upload and
+   from the scorecard, instant rubric recalculation.
+7. **Tracing UI**: `/admin/traces` waterfall page.
+8. **Polish**: the continuous-page progressive-disclosure interaction
+   details — expand-in-place, inline ask, confidence tags.
+
+This order front-loads the parts that carry the most risk/uncertainty
+(agent orchestration in a new framework, the scoring rubric's actual
+formula) before the more mechanical UI polish work.
+
+## Scoring rubric — v1 formulas (starting point, expect tuning once real runs exist)
+
+**Prerequisite — extraction schema needs a few new structured fields**,
+not text-sniffing existing prose: `hasTestCoverageGap` (bool),
+`dataQualityIssueCount` (int), `requiresMajorRestructuring` (bool) per
+service/system. Cleaner and more reliable than parsing `riskFactors[]`
+strings, and it's a small, contained addition to the existing extraction
+prompt, not new agent work.
+
+**Risk (0–100)** — weighted average of per-service risk levels
+(Critical=100/High=75/Medium=50/Low=25), equal-weighted across services
+for now (a known simplification — once a real dependency graph exists,
+weighting by "how many other services depend on this one" is the obvious
+refinement, but that data isn't structured yet). If operational data is
+present, real incident/error signals adjust risk up OR down from the
+code-only baseline — deliberately bidirectional, since operational data
+can also show a codebase is more stable in practice than its code smells
+suggest.
+
+**Effort (1–10)**:
+`normalize(serviceCount)×0.3 + normalize(phaseCount)×0.2 + (riskScore/100)×0.3 + restructuringMultiplier×0.2`
+
+**Time** — derived FROM Effort (not independently computed), via a
+lookup band:
+- Effort 1–2 → 4–8 weeks
+- Effort 3–4 → 8–16 weeks
+- Effort 5–6 → 3–6 months
+- Effort 7–8 → 6–9 months
+- Effort 9–10 → 9–12+ months
+
+then adjusted by team size (if provided via migration parameters) with a
+sublinear factor — `÷ √(teamSize / defaultTeamSize)` — as a small nod to
+Brooks's Law rather than pretending more engineers linearly speeds
+things up.
+
+**Cost**:
+`effort_in_person_weeks × teamSize × weeklyRateAssumption` (default
+blended rate, user-adjustable). Infra cost delta for a cloud target is a
+reasonable stretch addition later, not in the v1 formula.
+
+**Migration Readiness (0–100, the rollup)** — inverse-weighted composite:
+high Risk pulls it down, `dataQualityIssueCount` and missing-
+architecture-docs signals pull it down, an explicit "current architecture
+is largely sound" finding from Architecture Agent pulls it up. This is
+the score that most directly answers "should we even do this."
+
+**Known open question**: the weights above (0.3/0.2/0.3/0.2 especially)
+are a first pass on paper, not tuned against real output yet — expect to
+revisit once Phase 5 produces actual scores to sanity-check against.
+
+## Open items to nail down before/during build
+
+- Whether LangGraph.js's tool-sharing pattern maps directly onto V1's
+  "give Architecture/Risk the same DiscoveryTools instance" approach, or
+  needs a different shape in graph-based orchestration.
+- Auth/multi-tenancy — V1 never had this; worth deciding if V2 does or
+  stays single-user for the portfolio demo.
