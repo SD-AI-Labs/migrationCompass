@@ -96,6 +96,40 @@ This is a genuinely new piece of domain logic V1 never had — V1 stopped
 at per-service risk levels and a narrative; V2 adds the aggregation layer
 that turns findings into a decision-ready summary.
 
+### Dependency graph — service coupling visualization
+
+**New in V2, not carried over from V1.** An interactive node/edge graph
+of the uploaded codebase's services/modules, with edges representing
+actual call/import relationships extracted by the Discovery Agent (not
+inferred from file structure) and nodes colored by that service's risk
+level from the existing per-service risk findings.
+
+This isn't just a visualization — it closes a gap the rubric section
+already flags: Risk currently uses equal-weighted aggregation across
+services "for now," explicitly because "no real dependency graph exists
+yet" to weight by. Building this feature means the Discovery Agent's
+structured output needs to capture actual dependency edges (which
+service calls/imports which), and once that data exists, the Risk
+formula's equal-weighting simplification can be revisited — a highly-
+depended-on service failing should weigh more than a leaf service. Real
+follow-on work for the scoring engine, not just a nice picture.
+
+- **Data source**: Discovery Agent extraction schema gains a
+  `dependencies: [{from, to, type}]` field alongside the existing
+  per-service structured findings — a schema addition, done in Phase 4
+  (Agent orchestration) alongside the other Discovery Agent work.
+- **Rendering**: react-flow — interactive pan/zoom, click a node to
+  expand into that service's findings inline (consistent with the
+  "expand in place, never a page nav" rule), edge styling for
+  relationship type (sync call, async/event, shared DB, etc. — as far as
+  the Discovery Agent can reliably distinguish from static analysis).
+- **IA placement**: an expandable section off the scorecard/findings
+  area (Layer 2/3), not a new tab or standalone page — same
+  progressive-disclosure model as everything else in V2.
+- **Sequencing**: depends on Discovery Agent's dependency-extraction
+  work (Phase 4) being in place before the graph UI (Phase 5, alongside
+  the scoring engine) can render anything real.
+
 ### Code-only vs. refined — operational data enrichment
 
 Every score ships with a visible confidence signal: **"code-only
@@ -139,6 +173,7 @@ costly work stays an explicit action.
 | Vector storage | pgvector via Spring AI's PgVectorStore | pgvector, same Postgres, via Drizzle |
 | Tracing instrumentation | Micrometer + hand-rolled correlation-ID filter | OpenTelemetry SDK (trace ID doubles as the correlation ID — no separate mechanism needed) |
 | Tracing backend/UI | Zipkin (separate Docker container) | Spans written to the same Postgres DB; a `/admin/traces` route inside the app renders the waterfall — no extra infrastructure |
+| Dependency visualization | Not present in V1 | react-flow — interactive service/module dependency graph, risk-colored |
 | Deployment shape | 5 containers + Postgres + Ollama + Zipkin | One Next.js app + Postgres (+ Ollama for local embeddings) |
 
 ### Why this over the alternatives considered
@@ -195,6 +230,7 @@ even though the simple version is the actual build.
 │  UI: one continuous project page                      │
 │    - scorecard (Layer 1)                               │
 │    - findings/risk cards (Layer 2)                      │
+│    - dependency graph, react-flow (Layer 2/3)             │
 │    - narrative + phased plan, expandable (Layer 3)       │
 │    - persistent ask bar (Layer 4)                          │
 │                                                        │
@@ -225,9 +261,14 @@ even though the simple version is the actual build.
 3. **RAG + Ask**: retrieval pipeline (multi-query expansion + reranking,
    carried forward from V1's advanced round), the persistent ask-bar UI.
 4. **Agent orchestration**: LangGraph.js port of Discovery/Architecture/
-   Risk/Comparison, tool-sharing, bounded self-critique.
+   Risk/Comparison, tool-sharing, bounded self-critique. Discovery
+   Agent's extraction schema gains a `dependencies` field (which service
+   calls/imports which) — new structured output, not just a port of V1's
+   logic.
 5. **Scoring engine**: the rubric — the genuinely new piece — plus the
-   scorecard UI (Layer 1) and drill-down (Layers 2-3).
+   scorecard UI (Layer 1) and drill-down (Layers 2-3). Includes the
+   react-flow dependency graph view, rendered from Phase 4's dependency
+   data and colored by per-service risk.
 6. **Operational data + refinement**: optional enrichment at upload and
    from the scorecard, instant rubric recalculation.
 7. **Tracing UI**: `/admin/traces` waterfall page.
@@ -249,9 +290,13 @@ prompt, not new agent work.
 
 **Risk (0–100)** — weighted average of per-service risk levels
 (Critical=100/High=75/Medium=50/Low=25), equal-weighted across services
-for now (a known simplification — once a real dependency graph exists,
-weighting by "how many other services depend on this one" is the obvious
-refinement, but that data isn't structured yet). If operational data is
+in the v1 formula below. **Update**: the dependency graph feature (see
+Product vision) means real dependency-count data now exists as of Phase
+4/5 — weighting by "how many other services depend on this one" is a
+concrete Phase 5 refinement to try once the graph data is flowing,
+rather than a someday-maybe. Worth prototyping both (equal-weighted vs.
+dependency-weighted) and comparing against a couple of real test runs
+before deciding which ships. If operational data is
 present, real incident/error signals adjust risk up OR down from the
 code-only baseline — deliberately bidirectional, since operational data
 can also show a codebase is more stable in practice than its code smells
@@ -293,5 +338,24 @@ revisit once Phase 5 produces actual scores to sanity-check against.
 - Whether LangGraph.js's tool-sharing pattern maps directly onto V1's
   "give Architecture/Risk the same DiscoveryTools instance" approach, or
   needs a different shape in graph-based orchestration.
-- Auth/multi-tenancy — V1 never had this; worth deciding if V2 does or
-  stays single-user for the portfolio demo.
+
+### Resolved: Auth/multi-tenancy — session-scoped isolation, not full accounts
+
+Decision: no full multi-tenancy (no orgs, roles, invites, RBAC) — that
+scope isn't what's being evaluated here and would dilute the AI
+engineering story. But also not fully account-less: if V2 sits at a
+public URL as part of the LinkedIn/portfolio presence, concurrent
+visitors with zero session isolation could see each other's uploaded
+codebases and analyses, which is a real correctness bug, not just
+missing polish.
+
+Landed on the lightweight middle ground: a session-scoped `ownerId`
+(anonymous session cookie, or a single simple Auth.js provider) on the
+`projects` table, scoping visibility without any login/role/org
+machinery. Small, contained addition to the Drizzle schema in Phase 1
+(Scaffold) — cheaper to include from the start than to retrofit after
+Phase 2 (Ingestion) has real project data flowing through it.
+
+Schema implication: `projects` needs an `ownerId` (or `sessionId`)
+column from the initial Drizzle schema design in Phase 1, not added
+later.

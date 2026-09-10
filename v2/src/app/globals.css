@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+/*
+ * A small set of tokens rather than per-component colors, so the scorecard's
+ * risk palette stays consistent between the cards, the dependency graph nodes,
+ * and the drill-down panels. Risk colors are defined once as CSS variables and
+ * reused by both CSS and the react-flow node styling.
+ */
+
+:root {
+  --background: #0b0f14;
+  --surface: #121821;
+  --surface-raised: #18202b;
+  --border: #24303d;
+  --foreground: #e6edf3;
+  --muted: #8b9bab;
+  --accent: #4f9cf9;
+
+  --risk-critical: #e5484d;
+  --risk-high: #f76b15;
+  --risk-medium: #e2b53e;
+  --risk-low: #46a758;
+  --risk-unknown: #6b7683;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-border: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}

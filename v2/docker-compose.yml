@@ -1,0 +1,47 @@
+# Local infrastructure for V2.
+#
+# Two services, not V1's nine: the app itself is a single Next.js process, and
+# tracing writes to the same Postgres instead of a separate Zipkin container.
+#
+#   docker compose up -d postgres
+#   pnpm db:migrate
+#
+# Ollama is included for local embeddings. Pull the model once:
+#   docker compose exec ollama ollama pull nomic-embed-text
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: compass-postgres
+    environment:
+      POSTGRES_USER: compass
+      POSTGRES_PASSWORD: compass
+      POSTGRES_DB: compass
+    ports:
+      - "5432:5432"
+    volumes:
+      - compass-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U compass -d compass"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: compass-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - compass-ollama:/root/.ollama
+    # Same fix V1 needed: the ollama image ships no curl, so a curl-based
+    # healthcheck would report the container unhealthy while it works fine.
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+volumes:
+  compass-pgdata:
+  compass-ollama:

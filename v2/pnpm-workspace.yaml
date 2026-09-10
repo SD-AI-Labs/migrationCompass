@@ -1,0 +1,6 @@
+# pnpm 11 reads build-script permissions from here, not from package.json.
+# esbuild ships its platform binary via an install script; vitest cannot run
+# without it. Nothing else in this tree needs to execute install-time code.
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true
