@@ -6,6 +6,7 @@ import {
   executeAnalysisRun,
   ProjectNotFoundError,
   runAnalysis,
+  type RunOutputs,
   type RunRecord,
   type RunReports,
   type RunStep,
@@ -51,6 +52,7 @@ function createFakeRunStore(options: { failThrows?: boolean } = {}) {
         error: null,
         createdAt: new Date(),
         completedAt: null,
+        outputs: { discovery: null, architecture: null, risk: null, comparison: null },
       });
       transitions.push({ status: "pending", step: "discovery" });
       return { id };
@@ -72,13 +74,19 @@ function createFakeRunStore(options: { failThrows?: boolean } = {}) {
       transitions.push({ status: run.status, step });
     },
 
-    async complete(runId, reports: RunReports) {
+    async complete(runId, reports: RunReports, outputs: RunOutputs) {
       calls.push("complete");
       const run = runs.get(runId);
       if (!run) throw new Error(`no run ${runId}`);
       run.status = "complete";
       run.step = "done";
       run.completedAt = new Date();
+      run.outputs = {
+        discovery: outputs.discovery,
+        architecture: outputs.architecture,
+        risk: outputs.risk,
+        comparison: outputs.comparison,
+      };
       void reports;
       transitions.push({ status: "complete", step: "done" });
     },
@@ -104,6 +112,16 @@ function createFakeRunStore(options: { failThrows?: boolean } = {}) {
       return (
         [...runs.values()]
           .filter((run) => run.ownerId === ownerId && run.projectId === projectId)
+          .at(-1) ?? null
+      );
+    },
+
+    async latestCompletedRun(ownerId, projectId) {
+      return (
+        [...runs.values()]
+          .filter(
+            (run) => run.ownerId === ownerId && run.projectId === projectId && run.status === "complete",
+          )
           .at(-1) ?? null
       );
     },
@@ -200,6 +218,46 @@ describe("successful run", () => {
     expect(steps).toContain("risk");
     expect(steps).toContain("comparison");
     expect(steps.at(-1)).toBe("done");
+  });
+
+  it("records the results-write step before completing", async () => {
+    const { runStore, deps, ownerId } = harness();
+    await runAnalysis({ ownerId, projectId: "project-1", deps });
+
+    const steps = runStore.transitions
+      .map((transition) => transition.step)
+      .filter((step): step is RunStep => step !== undefined);
+
+    // The write of every finding and edge is its own persisted stage, so a reader is
+    // told "Finalizing results" rather than watching the last agent stage sit still.
+    expect(steps).toContain("finalizing");
+    expect(steps.indexOf("finalizing")).toBeGreaterThan(steps.indexOf("comparison"));
+    expect(steps.at(-1)).toBe("done");
+  });
+
+  it("finishes the run even when the results-write step cannot be recorded", async () => {
+    // A database whose `run_step` enum predates the migration cannot store
+    // `finalizing`. Losing a completed analysis over a progress label would be a
+    // strictly worse outcome than showing the previous stage a little longer.
+    const { runStore, analysisStore, deps, ownerId } = harness();
+    const store = runStore.store;
+    const advance = store.advanceStep.bind(store);
+
+    store.advanceStep = async (runId, step) => {
+      if (step === "finalizing") {
+        throw new Error("invalid input value for enum run_step: \"finalizing\"");
+      }
+      await advance(runId, step);
+    };
+
+    const result = await runAnalysis({ ownerId, projectId: "project-1", deps });
+
+    const record = await store.getRun(ownerId, result.runId);
+    expect(record?.status).toBe("complete");
+    expect(record?.step).toBe("done");
+    // The results themselves are written regardless of the label.
+    expect(analysisStore.writes).toHaveLength(1);
+    expect(analysisStore.writes[0]?.findings.length).toBeGreaterThan(0);
   });
 
   it("creates the run in pending before any stage runs", async () => {

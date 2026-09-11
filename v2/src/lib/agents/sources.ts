@@ -4,6 +4,7 @@ import { getDb, type Database } from "@/db/client";
 import { operationalData } from "@/db/schema";
 import { embedInBatches, createOllamaEmbeddings } from "@/lib/embeddings/embeddings";
 import { createDeepSeekLlm, type LlmClient } from "@/lib/llm/client";
+import { getLogger } from "@/lib/observability/logger";
 import { askQuestion } from "@/lib/rag/ask";
 import { searchChunks } from "@/lib/rag/retrieve";
 
@@ -30,27 +31,63 @@ export function createRagKnowledgeSource(llm: LlmClient = createDeepSeekLlm()): 
 
   return {
     async answer(projectId: string, question: string): Promise<KnowledgeAnswer> {
-      const result = await askQuestion({
-        question,
-        deps: {
-          llm,
-          embed: (texts) => embedInBatches(embeddings, texts),
-          // Scoped to the run's project at the point of the query, so an agent
-          // cannot retrieve another project's source through the tool.
-          retrieve: ({ queryEmbedding, limit }) =>
-            searchChunks({ projectId, queryEmbedding, limit }),
-        },
-      });
+      const logger = getLogger();
+      const startedAt = Date.now();
 
-      return {
-        answer: result.answer,
-        citations: result.citations.map((citation) => ({
-          source: citation.source,
-          similarity: citation.similarity,
-        })),
-        candidatesUsed: result.candidatesUsed,
-        candidatesRetrieved: result.candidatesRetrieved,
-      };
+      // Evidence retrieval, logged here rather than in the tool because this is the
+      // implementation that touches the database and the model. The question is
+      // reported as a length, never as text: it is model-written prose about the
+      // user's source, and the logger's contract is counts and references, not
+      // content. `projectId` scopes the pair; the run's trace id (injected into
+      // every line by the logger) ties them to one analysis.
+      logger.info({ stage: "retrieval", projectId, questionChars: question.length }, "Evidence retrieval started");
+
+      try {
+        const result = await askQuestion({
+          question,
+          deps: {
+            llm,
+            embed: (texts) => embedInBatches(embeddings, texts),
+            // Scoped to the run's project at the point of the query, so an agent
+            // cannot retrieve another project's source through the tool.
+            retrieve: ({ queryEmbedding, limit }) =>
+              searchChunks({ projectId, queryEmbedding, limit }),
+          },
+        });
+
+        logger.info(
+          {
+            stage: "retrieval",
+            projectId,
+            durationMs: Date.now() - startedAt,
+            candidatesRetrieved: result.candidatesRetrieved,
+            candidatesUsed: result.candidatesUsed,
+            citations: result.citations.length,
+          },
+          "Evidence retrieval completed",
+        );
+
+        return {
+          answer: result.answer,
+          citations: result.citations.map((citation) => ({
+            source: citation.source,
+            similarity: citation.similarity,
+          })),
+          candidatesUsed: result.candidatesUsed,
+          candidatesRetrieved: result.candidatesRetrieved,
+        };
+      } catch (error) {
+        logger.error(
+          {
+            stage: "retrieval",
+            projectId,
+            durationMs: Date.now() - startedAt,
+            errorMessage: error instanceof Error ? error.message : String(error),
+          },
+          "Evidence retrieval failed",
+        );
+        throw error;
+      }
     },
   };
 }

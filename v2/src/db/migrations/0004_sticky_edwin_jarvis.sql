@@ -1,0 +1,1 @@
+ALTER TYPE "public"."run_step" ADD VALUE 'finalizing' BEFORE 'done';

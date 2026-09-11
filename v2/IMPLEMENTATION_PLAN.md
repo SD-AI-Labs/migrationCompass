@@ -199,18 +199,108 @@ Acceptance:
 
 ---
 
-### M7 — Polish
+### M7 — Polish + the Analysis Report
 
-**Goal:** progressive disclosure done consistently.
+**Goal:** progressive disclosure done consistently, and the explanation layer
+beneath the scorecard: the scorecard states the numbers, the report states what
+they rest on.
 
 Deliverables:
+- **Analysis report** — `src/lib/report/builder.ts`, a pure composer over data the
+  pipeline already persists: the four validated structured outputs, findings,
+  dependency edges, the graph model, the indexed source inventory, and the
+  scorecard's own explanations. No second model pass, no new persistence.
+  Rendered by `src/components/analysis-report.tsx` in eight sections behind
+  `<details>` — the executive summary and the **key takeaways** visible, everything else
+  expanding in place, severity stated in words as well as colour, evidence counted and
+  collapsed per item, and the per-service section giving one disclosure per service
+  (severity, rubric inputs, recommendation, evidence, and what it calls and is called by).
+- **Report composition must not duplicate the pipeline.** Coupling statements read
+  the same `buildDependencyGraph()` model the diagram renders; score strings come
+  from one shared formatter (`src/lib/scoring/format.ts`) used by both the
+  scorecard and the report; per-edge evidence is read from the validated Discovery
+  output rather than re-extracted.
+- **Ask handoff** — `src/lib/ask-handoff.ts` publishes a composed question from a
+  report section or finding into the *existing* ask bar (`/api/ask`). No second
+  conversational surface: the handoff prefills the box and takes focus, and the
+  reader still presses Ask.
+- **Report-state coverage** — an explicit empty report state (a run that recorded
+  no structured output says so), per-section empty notes, elision notes on capped
+  lists, and a loader that fails soft so an unavailable source list never costs a
+  reader the rest of the report.
+- **Graph text alternative** — `src/components/dependency-list.tsx` renders the same
+  `buildDependencyGraph()` model as text: edges as sentences, services with their
+  risk and counts, circular chains, suppressed edges. The canvas is not the only way
+  to read the topology, and the visual edge layer's known defect cannot hide it.
+- **Error states, and a failed read that is not an empty result** — page loads return
+  outcomes, so a failure to read the project list renders an error panel rather than
+  the "no projects yet" claim; a per-project assessment failure renders on its row;
+  the ask bar and the analysis failure state announce themselves as alerts; no
+  database message reaches a reader.
+- **Owner-scoped not-found** — project actions end in `notFound()` for a project the
+  session cannot see, with a rendered not-found page that does not distinguish
+  "deleted" from "another session's".
+- **Analysis lifecycle** — persisted stages (`discovery` → `architecture`/`risk` →
+  `comparison` → `finalizing` → `done`), structured lifecycle logging with
+  `projectId`/`runId`/`stage`/durations/counts, and client polling that re-renders
+  the page when the run reaches `complete` or `failed`.
 - expand-in-place everywhere, inline ask from any card, confidence tags,
   empty/loading/error states, `ownerId`-scoped not-found handling
 - accessibility pass on the interactive surfaces
+- **Report composition and the visual system** — the report is a chapter of the
+  assessment surface, not a narrow document inside it: the container spans the dashboard,
+  the masthead carries a subtitle and one metadata line assembled from the sections' own
+  counts, a `.masthead-rule` marks the chapter break after the scorecard, the executive
+  summary splits the lede beside its supporting paragraphs, the key takeaways are a two-up
+  card grid, and findings are rows with their counted evidence and Ask control in a right
+  column. Readability comes from a measure on the prose (~79 characters), never from
+  capping the container — an earlier version capped the container and left half the
+  dashboard empty.
+- **Theme** — one token vocabulary in `src/app/globals.css` (page / panel / raised tile /
+  inset well; indigo primary, muted cyan secondary; the `--risk-*` ramp as the only
+  semantic palette), consumed through custom properties so that **no component contains a
+  colour literal**. Adjacent surfaces are separated by ≈6.5 points of CIE L* so the
+  hierarchy is visible rather than nominal, and every text colour clears WCAG AA on the
+  surface it is used on.
+- **Remaining after this workstream:** the browser checks for the error, not-found,
+  loading and in-flight progress states, hand-driven interaction and a screen-reader pass;
+  and the React Flow rendering defect, which is not an M7 item (see `PROJECT_STATUS.md`
+  §M4 §11). The main surfaces — page, scorecard, report, dependency text list, graph canvas
+  and `/admin/traces` — have been rendered and inspected at 1680 / 1100 / 414px.
 
 Acceptance:
+- report tests: composition from structured data (every section), executive
+  summary, findings and severity rendering, evidence rendering, effort/cost
+  explanation, the empty state, progressive disclosure, the ask handoff, and
+  consistency between the scorecard's values and the report's — all without a
+  model, an API key or a database
+- the source-listing query verified against live Postgres, including that a
+  foreign session gets nothing and that no chunk content is returned
 - interaction tests for expand/collapse state and ask-bar handoff
 - full suite green
+
+**Implementation is not verification.** The report and its tests can be complete
+with no browser having loaded a page: the acceptance criteria above include the
+interaction and accessibility behaviour *as rendered*, and until a page has
+actually been loaded and driven, M7 is implemented and test-verified rather than
+verified. `PROJECT_STATUS.md` records which of the two applies.
+
+Where the criteria above stand today, as recorded in `PROJECT_STATUS.md`:
+
+- **met** — the report composition tests (every section, executive summary, findings and
+  severity, evidence, effort/cost explanation, the empty state, progressive disclosure,
+  the ask handoff, and scorecard/report consistency), without a model, key or database;
+- **met** — the source-listing query verified against live Postgres, including that a
+  foreign session gets nothing and that no chunk content is returned;
+- **written, not driven** — the interaction tests assert the disclosure *structure* and
+  the handoff events; jsdom does not implement `<details>` toggling, so no
+  click-to-expand or Ask handoff has been exercised by hand;
+- **not met** — "full suite green" since the report landed. The suite was last green in
+  full *before* the report (655 passed / 38 files); everything after it has been run in
+  groups, and the totals are in `PROJECT_STATUS.md`;
+- **partly met** — browser coverage. The page, scorecard, report, dependency text list,
+  graph canvas and `/admin/traces` have been rendered and inspected at 1680 / 1100 /
+  414px; the error, not-found, loading and in-flight progress states have not.
 
 ---
 

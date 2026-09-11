@@ -15,6 +15,27 @@
       "when": 1789047610638,
       "tag": "0001_spooky_brood",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789051248460,
+      "tag": "0002_dry_scarlet_spider",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789126160740,
+      "tag": "0003_rainy_quicksilver",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789129513903,
+      "tag": "0004_sticky_edwin_jarvis",
+      "breakpoints": true
     }
   ]
 }

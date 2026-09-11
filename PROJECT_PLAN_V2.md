@@ -60,7 +60,8 @@ serves two personas without making either of them pick a mode:
 
 - **The fast path** ("just tell me"): upload, wait, see five headline
   scores. Done, if that's all they want.
-- **The deep path** ("let me dig in"): every score, card, and finding is
+- **The deep path** ("let me dig in"): the analysis report explains what
+  the scores are resting on, and every score, section, card, and finding is
   a jumping-off point to expand for detail or ask a follow-up — inline,
   never a page navigation.
 
@@ -96,6 +97,75 @@ This is a genuinely new piece of domain logic V1 never had — V1 stopped
 at per-service risk levels and a narrative; V2 adds the aggregation layer
 that turns findings into a decision-ready summary.
 
+### The analysis report — the explanation layer
+
+The scorecard is the executive summary. Directly beneath it sits the
+**analysis report**, which answers the questions a number cannot: what was
+discovered, why the scores came out the way they did, and what the migration
+considerations are. Scorecard first, report second — the report never displaces
+the summary, it explains it.
+
+**The report is composed, not generated.** This is the same credibility argument
+the scorecard makes, applied to prose: a second LLM pass over the codebase to
+"write up the findings" would produce text that cannot be checked against
+anything, and would contradict the whole reason the numbers are rubric-based. So
+there is no second analysis. The report is assembled on the server from data the
+pipeline has already persisted and validated:
+
+- the four structured outputs (`discovery_output`, `architecture_output`,
+  `risk_output`, `comparison_output`) — the agents' own statements, reused
+  verbatim where they are quoted;
+- the per-service findings: risk levels, the rubric's structured inputs, risk
+  factors, recommendations, dependent counts;
+- the dependency edges and the *same* graph model the diagram renders, so the
+  coupling the report describes and the picture the reader sees cannot disagree;
+- the indexed source inventory (file names and document types — never contents);
+- the deterministic scorecard and its explanations, formatted through the same
+  code the scorecard uses, so a number cannot read two ways.
+
+Eight sections: **Executive Summary** (what was discovered, the migration
+posture, the most serious recorded concern, the recorded migration direction),
+**System Discovery**, **Architecture Analysis** (most depended-upon services,
+longest dependency chain, circular chains, shared-database coupling, unclassified
+edges, services with no recorded relationships), **Risk Analysis** (every finding
+by severity with its reasoning and the evidence behind it), **Findings by
+Service** (the same findings the other way round — one disclosure per service
+with its severity, rubric inputs, recommendation, cited evidence and its
+dependencies, which is also how a reader reaches findings without the graph),
+**Migration Considerations** (straightforward areas, restructuring, coverage
+gaps, the recorded phased plan in order), **Effort and Cost Explanation** (the
+rubric's own contributors, the assumptions in force, and the operational-data
+adjustment when refinement data exists), and **Evidence** (indexed files, cited
+risk factors, per-edge static-analysis evidence, evidence quality, and the
+Comparison stage's own self-assessment).
+
+The dependency topology is readable without the graph, too: the same
+`buildDependencyGraph()` model the canvas draws is rendered as a text list of
+edges, services and cycles, so the picture is never the only route to the
+structure.
+
+Interaction follows the same progressive-disclosure rule as everything else in
+V2: the executive summary and the **key takeaways** are visible, each section expands
+in place, a collapsed section still states what it holds, a section with nothing to
+say says so, severity is stated in words as well as colour, and evidence is counted
+and collapsed rather than printed under every finding. Any section or finding can
+hand a composed question to the ask bar — look at the evidence first, then ask about
+it, without leaving the page.
+
+Composition, as built: the report is a **chapter of the assessment surface**, not a
+narrow document embedded in it. Its container spans the dashboard and each band uses
+that width — the masthead carries a subtitle and one metadata line assembled from the
+sections' own counts, a rule marks the chapter break after the scorecard, the executive
+summary puts its lede beside its supporting paragraphs, the key takeaways are a two-up
+grid of compact cards, and findings are rows with their evidence and Ask control in a
+right-hand column. Readability is a property of the *text*: prose is capped at a
+~79-character measure. Capping the container instead would leave half the dashboard
+empty and make the report read as an article rather than part of the product.
+
+Where the analysis genuinely lacks an input, the report states that rather than
+filling the gap: no architecture output means no recommended direction; no
+recorded operational data means the estimates are described as code-only.
+
 ### Dependency graph — service coupling visualization
 
 **New in V2, not carried over from V1.** An interactive node/edge graph
@@ -113,6 +183,15 @@ service calls/imports which), and once that data exists, the Risk
 formula's equal-weighting simplification can be revisited — a highly-
 depended-on service failing should weigh more than a leaf service. Real
 follow-on work for the scoring engine, not just a nice picture.
+
+**Current state:** the model, the typed edges, the deterministic layout and the text
+equivalent are implemented and unit-tested, and the graph renders on the page beside the
+text list. The **canvas rendering is defective**: node boxes, labels and risk colours are
+correct, but the edge paths are emitted with geometry that arcs above the node row
+instead of joining node to node, a stray control rectangle sits at the canvas's left edge,
+and the canvas keeps unused height. The measured state, and the earlier `visibility:
+hidden` failure mode it replaced, are recorded in `PROJECT_STATUS.md` §M4 §11; the model
+must not be rewritten to work around a rendering-layer defect.
 
 - **Data source**: Discovery Agent extraction schema gains a
   `dependencies: [{from, to, type}]` field alongside the existing
@@ -229,6 +308,7 @@ even though the simple version is the actual build.
 │                                                        │
 │  UI: one continuous project page                      │
 │    - scorecard (Layer 1)                               │
+│    - analysis report, expandable (Layers 2-3)            │
 │    - findings/risk cards (Layer 2)                      │
 │    - dependency graph, react-flow (Layer 2/3)             │
 │    - narrative + phased plan, expandable (Layer 3)       │
@@ -251,7 +331,11 @@ even though the simple version is the actual build.
       + trace spans)                 unchanged from V1)
 ```
 
-## Build phases (proposed — not yet started)
+## Build phases
+
+Delivered in this order; the milestone breakdown is `v2/IMPLEMENTATION_PLAN.md`, and
+what is actually *verified* is `PROJECT_STATUS.md` — read that for status rather than
+this list, which records the intended sequence.
 
 1. **Scaffold**: Next.js app, Drizzle schema (projects, analysis runs,
    scores, trace spans), OTel wiring, Postgres/pgvector setup, Ollama
@@ -273,7 +357,12 @@ even though the simple version is the actual build.
    from the scorecard, instant rubric recalculation.
 7. **Tracing UI**: `/admin/traces` waterfall page.
 8. **Polish**: the continuous-page progressive-disclosure interaction
-   details — expand-in-place, inline ask, confidence tags.
+   details — expand-in-place, inline ask, confidence tags — including the
+   analysis report, the explanation layer beneath the scorecard. The report
+   has no phase of its own because it introduces no new analysis: it is
+   composed from Phase 4's structured outputs, Phase 5's scoring arithmetic
+   and the persisted findings, which is also why it needs no extra model
+   call and no extra persistence.
 
 This order front-loads the parts that carry the most risk/uncertainty
 (agent orchestration in a new framework, the scoring rubric's actual
@@ -349,9 +438,8 @@ visitors with zero session isolation could see each other's uploaded
 codebases and analyses, which is a real correctness bug, not just
 missing polish.
 
-Landed on the lightweight middle ground: a session-scoped `ownerId`
-(anonymous session cookie, or a single simple Auth.js provider) on the
-`projects` table, scoping visibility without any login/role/org
+Landed on the lightweight middle ground: a session-scoped `ownerId` on
+the `projects` table, scoping visibility without any login/role/org
 machinery. Small, contained addition to the Drizzle schema in Phase 1
 (Scaffold) — cheaper to include from the start than to retrofit after
 Phase 2 (Ingestion) has real project data flowing through it.
@@ -359,3 +447,13 @@ Phase 2 (Ingestion) has real project data flowing through it.
 Schema implication: `projects` needs an `ownerId` (or `sessionId`)
 column from the initial Drizzle schema design in Phase 1, not added
 later.
+
+**As implemented:** the anonymous-session-cookie option was taken, and only that option.
+`src/lib/session.ts` mints a random `ownerId` on the first create path (`ensureOwnerId()`),
+stores it in an httpOnly `mc_owner` cookie with a 30-day max age, and every read path
+filters on it. There is **no** Auth.js provider, no OAuth, no magic link, no account
+model and no RBAC in the codebase — the id is a visibility scope rather than a
+credential, it is not authenticated, and it must not be presented as a security
+boundary. `pnpm seed:sample` prints the cookie to set rather than making a fixture
+globally visible, and trace spans carry no owner id, which is why `/admin/traces` is
+gated behind `ADMIN_TRACES_ENABLED` instead of being session-scoped.

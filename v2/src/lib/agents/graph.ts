@@ -56,6 +56,8 @@ import { runToolLoop } from "./tool-loop";
  * runs in a test with no API key, no Ollama, and no database.
  */
 
+export type StageTiming = { durationMs: number; toolCalls: number };
+
 export type AgentDeps = {
   llm: LlmClient;
   /** One instance, shared by more than one agent — the plan's tool-sharing claim. */
@@ -66,6 +68,13 @@ export type AgentDeps = {
    * knows about: the graph must not depend on a database.
    */
   onStageStart?: (stage: AgentStage) => Promise<void>;
+  /**
+   * Called when a stage finishes, with how long it took and how many tool calls it
+   * made. Timed by the node itself because Architecture and Risk run concurrently —
+   * a caller measuring between stage transitions would attribute their overlap to
+   * whichever reported last.
+   */
+  onStageEnd?: (stage: AgentStage, timing: StageTiming) => Promise<void> | void;
   maxToolIterations?: number;
 };
 
@@ -267,17 +276,40 @@ export async function extractStructured<S>(
   }
 }
 
-async function discoveryNode(state: GraphState, deps: AgentDeps): Promise<Partial<GraphState>> {
-  await deps.onStageStart?.("discovery");
-
-  const result = await runAgentStage({
-    stage: "discovery",
-    deps,
-    context: {},
-    toolContext: toolContextOf(state),
-    schema: discoveryOutputSchema,
-    isCritiqued: true,
+/**
+ * Runs one stage, announcing it before it begins and reporting its timing when it
+ * finishes.
+ *
+ * The announcement stays ahead of the work — a `step` written after the fact would
+ * tell a poller where a run *was*, not where it is — and the duration is measured
+ * around the stage's own work so concurrent branches are timed independently.
+ */
+async function runTimedStage<T extends { toolCalls: number }>(
+  deps: AgentDeps,
+  stage: AgentStage,
+  run: () => Promise<T>,
+): Promise<T> {
+  await deps.onStageStart?.(stage);
+  const startedAt = Date.now();
+  const result = await run();
+  await deps.onStageEnd?.(stage, {
+    durationMs: Date.now() - startedAt,
+    toolCalls: result.toolCalls,
   });
+  return result;
+}
+
+async function discoveryNode(state: GraphState, deps: AgentDeps): Promise<Partial<GraphState>> {
+  const result = await runTimedStage(deps, "discovery", () =>
+    runAgentStage({
+      stage: "discovery",
+      deps,
+      context: {},
+      toolContext: toolContextOf(state),
+      schema: discoveryOutputSchema,
+      isCritiqued: true,
+    }),
+  );
 
   return {
     discovery: {
@@ -295,32 +327,34 @@ async function discoveryNode(state: GraphState, deps: AgentDeps): Promise<Partia
 
 async function architectureNode(state: GraphState, deps: AgentDeps): Promise<Partial<GraphState>> {
   const discovery = requireStage(state.discovery, "architecture", "Discovery");
-  await deps.onStageStart?.("architecture");
 
-  const result = await runAgentStage({
-    stage: "architecture",
-    deps,
-    context: { discoveryReport: discovery.narrative },
-    toolContext: toolContextOf(state),
-    schema: architectureOutputSchema,
-    isCritiqued: true,
-  });
+  const result = await runTimedStage(deps, "architecture", () =>
+    runAgentStage({
+      stage: "architecture",
+      deps,
+      context: { discoveryReport: discovery.narrative },
+      toolContext: toolContextOf(state),
+      schema: architectureOutputSchema,
+      isCritiqued: true,
+    }),
+  );
 
   return { architecture: result, completedStages: ["architecture"] };
 }
 
 async function riskNode(state: GraphState, deps: AgentDeps): Promise<Partial<GraphState>> {
   const discovery = requireStage(state.discovery, "risk", "Discovery");
-  await deps.onStageStart?.("risk");
 
-  const result = await runAgentStage({
-    stage: "risk",
-    deps,
-    context: { discoveryReport: discovery.narrative },
-    toolContext: toolContextOf(state),
-    schema: riskAssessmentSchema,
-    isCritiqued: true,
-  });
+  const result = await runTimedStage(deps, "risk", () =>
+    runAgentStage({
+      stage: "risk",
+      deps,
+      context: { discoveryReport: discovery.narrative },
+      toolContext: toolContextOf(state),
+      schema: riskAssessmentSchema,
+      isCritiqued: true,
+    }),
+  );
 
   return { risk: result, completedStages: ["risk"] };
 }
@@ -329,23 +363,24 @@ async function comparisonNode(state: GraphState, deps: AgentDeps): Promise<Parti
   const discovery = requireStage(state.discovery, "comparison", "Discovery");
   const architecture = requireStage(state.architecture, "comparison", "Architecture");
   const risk = requireStage(state.risk, "comparison", "Risk");
-  await deps.onStageStart?.("comparison");
 
-  const result = await runAgentStage({
-    stage: "comparison",
-    deps,
-    context: {
-      discoveryReport: discovery.narrative,
-      architectureProposal: architecture.narrative,
-      riskAssessment: risk.narrative,
-    },
-    toolContext: toolContextOf(state),
-    schema: comparisonOutputSchema,
-    // Comparison's whole job is to critique honestly; layering a
-    // critique-of-the-critique on top adds cost and risks softening the
-    // assessment into something more agreeable. Deliberately not critiqued.
-    isCritiqued: false,
-  });
+  const result = await runTimedStage(deps, "comparison", () =>
+    runAgentStage({
+      stage: "comparison",
+      deps,
+      context: {
+        discoveryReport: discovery.narrative,
+        architectureProposal: architecture.narrative,
+        riskAssessment: risk.narrative,
+      },
+      toolContext: toolContextOf(state),
+      schema: comparisonOutputSchema,
+      // Comparison's whole job is to critique honestly; layering a
+      // critique-of-the-critique on top adds cost and risks softening the
+      // assessment into something more agreeable. Deliberately not critiqued.
+      isCritiqued: false,
+    }),
+  );
 
   return { comparison: result, completedStages: ["comparison"] };
 }

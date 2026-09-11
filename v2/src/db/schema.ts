@@ -8,6 +8,7 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   vector,
 } from "drizzle-orm/pg-core";
@@ -40,6 +41,8 @@ export const runStepEnum = pgEnum("run_step", [
   "architecture",
   "risk",
   "comparison",
+  /** The results write: findings and edges stored, then the run closed. */
+  "finalizing",
   "done",
 ]);
 export const riskLevelEnum = pgEnum("risk_level", ["critical", "high", "medium", "low"]);
@@ -119,6 +122,19 @@ export const analysisRuns = pgTable(
     architectureProposal: text("architecture_proposal"),
     riskAssessment: text("risk_assessment"),
     comparisonReport: text("comparison_report"),
+    /**
+     * The validated structured outputs behind the narratives, as JSON.
+     *
+     * Nullable because runs created before this column existed have none. Written
+     * by the runner so the scoring engine can consume `currentArchitectureLargelySound`
+     * and the phased plan as *structured data* rather than re-parsing the prose —
+     * which the M4 brief explicitly forbids, and which would be the one place a
+     * score could silently drift from the findings it claims to rest on.
+     */
+    discoveryOutput: jsonb("discovery_output").$type<Record<string, unknown>>(),
+    architectureOutput: jsonb("architecture_output").$type<Record<string, unknown>>(),
+    riskOutput: jsonb("risk_output").$type<Record<string, unknown>>(),
+    comparisonOutput: jsonb("comparison_output").$type<Record<string, unknown>>(),
     error: text("error"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -229,20 +245,30 @@ export const operationalData = pgTable(
   (table) => [index("operational_data_project_idx").on(table.projectId, table.kind)],
 );
 
-/** Migration parameters: business assumptions, not files. Parameterizes cost/time math. */
-export const migrationParameters = pgTable("migration_parameters", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  projectId: uuid("project_id")
-    .notNull()
-    .references(() => projects.id, { onDelete: "cascade" }),
-  targetEnvironment: text("target_environment"),
-  provider: text("provider"),
-  teamSize: integer("team_size"),
-  weeklyRate: numeric("weekly_rate", { precision: 10, scale: 2 }),
-  budget: numeric("budget", { precision: 14, scale: 2 }),
-  timelineWeeks: integer("timeline_weeks"),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+/**
+ * Migration parameters: business assumptions, not files. Parameterizes cost/time math.
+ *
+ * One row per project, enforced by a unique index rather than by convention: the
+ * parameters are *the* assumptions in force for a project, and two rows would raise
+ * the question of which one a scorecard was computed from.
+ */
+export const migrationParameters = pgTable(
+  "migration_parameters",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    targetEnvironment: text("target_environment"),
+    provider: text("provider"),
+    teamSize: integer("team_size"),
+    weeklyRate: numeric("weekly_rate", { precision: 10, scale: 2 }),
+    budget: numeric("budget", { precision: 14, scale: 2 }),
+    timelineWeeks: integer("timeline_weeks"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("migration_parameters_project_idx").on(table.projectId)],
+);
 
 /** OTel spans, in the app's own database. /admin/traces renders these. */
 export const traceSpans = pgTable(

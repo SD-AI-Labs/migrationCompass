@@ -1,8 +1,9 @@
 import type { LlmClient } from "@/lib/llm/client";
+import { getLogger } from "@/lib/observability/logger";
 
 import { runAnalysisGraph, type AgentDeps, type AnalysisOutcome } from "./graph";
 import { persistAnalysis, type AnalysisStore, type PersistencePlan } from "./persistence";
-import type { AgentStage } from "./prompts";
+import { RUN_STEPS as RUN_STEP_VALUES, STAGE_LABELS, type RunStatus, type RunStep } from "./progress";
 import type { SharedTools } from "./tools";
 
 /**
@@ -19,6 +20,18 @@ import type { SharedTools } from "./tools";
  * visibly `pending` forever instead of invisibly `running` forever, and those two
  * are very different things to whoever is looking at the page.
  *
+ * `step` advances through the graph's own stages — discovery, then architecture and
+ * risk concurrently, then comparison — and finishes with `finalizing`, which is the
+ * results write, before `done`. Those are the only stages a reader is ever told
+ * about; there is no interpolated stage and no percentage, because the database has
+ * no such thing to report.
+ *
+ * Who watches the run is the other half of the contract: `readAnalysisProgressAction`
+ * reads the row back for the client component that polls it, and that component
+ * re-renders the page once this runner has written a terminal state. Nothing else
+ * can — the page is a server render, and the action that started the run returned
+ * while it was still queued.
+ *
  * ## Failure is a persisted state, not an exception
  *
  * Every failure marks the run `failed` with the stage it died in and the message.
@@ -34,10 +47,15 @@ import type { SharedTools } from "./tools";
  * started against someone else's codebase even with a valid project id.
  */
 
-export type RunStatus = "pending" | "running" | "complete" | "failed";
-export type RunStep = AgentStage | "done";
+/**
+ * Re-exported from `./progress`, which owns the values as literals so the client
+ * component can share them without pulling a database schema into the bundle.
+ * `progress.test.ts` asserts they match the `run_status` / `run_step` enums.
+ */
+export type { RunStatus, RunStep };
 
-export const RUN_STEPS: RunStep[] = ["discovery", "architecture", "risk", "comparison", "done"];
+/** Every step a run can be in, in the order it reaches them. */
+export const RUN_STEPS: RunStep[] = [...RUN_STEP_VALUES];
 
 export type RunRecord = {
   id: string;
@@ -48,6 +66,13 @@ export type RunRecord = {
   error: string | null;
   createdAt: Date;
   completedAt: Date | null;
+  /** Null for runs recorded before the structured outputs were persisted. */
+  outputs: {
+    discovery: Record<string, unknown> | null;
+    architecture: Record<string, unknown> | null;
+    risk: Record<string, unknown> | null;
+    comparison: Record<string, unknown> | null;
+  };
 };
 
 export type RunReports = {
@@ -57,17 +82,39 @@ export type RunReports = {
   comparisonReport: string;
 };
 
+/**
+ * The validated structured outputs behind those narratives.
+ *
+ * Persisted alongside the reports because the scoring engine consumes them as
+ * data — `currentArchitectureLargelySound`, the phased plan — and must not
+ * re-parse prose to recover them.
+ */
+export type RunOutputs = {
+  discovery: Record<string, unknown>;
+  architecture: Record<string, unknown>;
+  risk: Record<string, unknown>;
+  comparison: Record<string, unknown>;
+};
+
 export type RunStore = {
   /** Persists a new run in `pending`. */
   create(input: { projectId: string; ownerId: string }): Promise<{ id: string }>;
   markRunning(runId: string): Promise<void>;
   /** Advances `step` while the run is in progress. */
   advanceStep(runId: string, step: RunStep): Promise<void>;
-  complete(runId: string, reports: RunReports): Promise<void>;
+  complete(runId: string, reports: RunReports, outputs: RunOutputs): Promise<void>;
   /** Must never throw: it is called from a failure path that has an error to report. */
   fail(runId: string, input: { stage: RunStep; message: string }): Promise<void>;
   getRun(ownerId: string, runId: string): Promise<RunRecord | null>;
   latestRun(ownerId: string, projectId: string): Promise<RunRecord | null>;
+  /**
+   * The most recent *completed* run for a project.
+   *
+   * Distinct from `latestRun` because a project can have a run in flight while an
+   * earlier one finished: the scorecard has to be built from the newest run that
+   * actually produced findings, not from whichever row happens to be newest.
+   */
+  latestCompletedRun(ownerId: string, projectId: string): Promise<RunRecord | null>;
 };
 
 /** The resolved project, already proven to belong to the requesting session. */
@@ -130,6 +177,32 @@ export function describeError(error: unknown): string {
 }
 
 /**
+ * Records a step, tolerating a database that cannot store it.
+ *
+ * `finalizing` is the newest value in the `run_step` enum, so a database that has
+ * not had the migration applied yet cannot store it. That must not fail a run whose
+ * results are otherwise complete — losing an analysis over a progress label would
+ * be absurd — so the failure is logged and the run carries on with the previous
+ * step on record.
+ */
+async function recordStep(
+  deps: Omit<RunDeps, "resolveProject">,
+  input: { projectId: string; runId: string },
+  step: RunStep,
+): Promise<boolean> {
+  try {
+    await deps.runStore.advanceStep(input.runId, step);
+    return true;
+  } catch (error) {
+    getLogger().warn(
+      { error, runId: input.runId, projectId: input.projectId, stage: step },
+      "Could not record the analysis step",
+    );
+    return false;
+  }
+}
+
+/**
  * Executes an already-created run.
  *
  * Separated from creation so a caller can create the run, return its id to the
@@ -140,6 +213,11 @@ export function describeError(error: unknown): string {
  * Takes the deps without `resolveProject`: ownership was already proven when the
  * run was created, and a second lookup here would be a second chance to get the
  * scoping wrong.
+ *
+ * The lifecycle is logged here rather than in the server action because this is
+ * where the run actually happens — and because scripts (`demo:run`, `seed:sample`)
+ * call it directly, so one set of lines covers every caller. Every line carries
+ * `projectId`, `runId` and `stage`; none carries source text or credentials.
  */
 export async function executeAnalysisRun(input: {
   runId: string;
@@ -147,6 +225,8 @@ export async function executeAnalysisRun(input: {
   deps: Omit<RunDeps, "resolveProject">;
 }): Promise<{ runId: string; outcome: AnalysisOutcome; persisted: PersistencePlan }> {
   const { runId, projectId, deps } = input;
+  const logger = getLogger();
+  const startedAt = Date.now();
 
   // Tracks the furthest stage reached, so a failure knows where it happened even
   // though the graph's own record only exists on success.
@@ -154,6 +234,7 @@ export async function executeAnalysisRun(input: {
 
   try {
     await deps.runStore.markRunning(runId);
+    logger.info({ projectId, runId, stage: currentStage }, "Analysis run started");
 
     const graphDeps: AgentDeps = {
       llm: deps.llm,
@@ -162,10 +243,48 @@ export async function executeAnalysisRun(input: {
       onStageStart: async (stage) => {
         currentStage = stage;
         await deps.runStore.advanceStep(runId, stage);
+        logger.info(
+          { projectId, runId, stage, elapsedMs: Date.now() - startedAt },
+          `${STAGE_LABELS[stage]} started`,
+        );
+      },
+      onStageEnd: (stage, info) => {
+        // Timed inside the stage, not between transitions: Architecture and Risk
+        // run concurrently, so a stage-to-stage delta would attribute their overlap
+        // to whichever reported last.
+        logger.info(
+          {
+            projectId,
+            runId,
+            stage,
+            durationMs: info.durationMs,
+            toolCalls: info.toolCalls,
+            elapsedMs: Date.now() - startedAt,
+          },
+          `${STAGE_LABELS[stage]} completed`,
+        );
       },
     };
 
     const outcome = await runAnalysisGraph({ projectId, runId, deps: graphDeps });
+
+    const toolCalls = [
+      outcome.discovery.toolCalls,
+      outcome.architecture.toolCalls,
+      outcome.risk.toolCalls,
+      outcome.comparison.toolCalls,
+    ].reduce((total, count) => total + count, 0);
+
+    // The results write, as its own persisted step: it stores every finding and
+    // edge, and on a large codebase it is the longest thing between the last agent
+    // finishing and the scorecard existing.
+    currentStage = "finalizing";
+    const finalizingStartedAt = Date.now();
+    await recordStep(deps, { projectId, runId }, "finalizing");
+    logger.info(
+      { projectId, runId, stage: "finalizing", elapsedMs: finalizingStartedAt - startedAt },
+      `${STAGE_LABELS.finalizing} started`,
+    );
 
     const persisted = await persistAnalysis(deps.analysisStore, {
       runId,
@@ -174,25 +293,89 @@ export async function executeAnalysisRun(input: {
       risk: outcome.risk.structured,
     });
 
+    logger.info(
+      {
+        projectId,
+        runId,
+        stage: "finalizing",
+        durationMs: Date.now() - finalizingStartedAt,
+        findings: persisted.findings.length,
+        dependencies: persisted.dependencies.length,
+        undiscoveredServices: persisted.undiscoveredServices.length,
+        toolCalls,
+      },
+      `${STAGE_LABELS.finalizing} completed`,
+    );
+
     currentStage = "done";
-    await deps.runStore.complete(runId, {
-      discoveryReport: outcome.discovery.narrative,
-      architectureProposal: outcome.architecture.narrative,
-      riskAssessment: outcome.risk.narrative,
-      comparisonReport: outcome.comparison.narrative,
-    });
+    await deps.runStore.complete(
+      runId,
+      {
+        discoveryReport: outcome.discovery.narrative,
+        architectureProposal: outcome.architecture.narrative,
+        riskAssessment: outcome.risk.narrative,
+        comparisonReport: outcome.comparison.narrative,
+      },
+      // Spread into fresh literals: the stage outputs are typed objects, and the
+      // persistence boundary stores them as plain JSON for the scoring engine to
+      // validate on read.
+      {
+        discovery: { ...outcome.discovery.structured },
+        architecture: { ...outcome.architecture.structured },
+        risk: { ...outcome.risk.structured },
+        comparison: { ...outcome.comparison.structured },
+      },
+    );
+
+    logger.info(
+      {
+        projectId,
+        runId,
+        stage: "complete",
+        durationMs: Date.now() - startedAt,
+        findings: persisted.findings.length,
+        dependencies: persisted.dependencies.length,
+        toolCalls,
+      },
+      "Analysis run completed",
+    );
 
     return { runId, outcome, persisted };
   } catch (error) {
     const detail = describeError(error);
 
+    // Logged before the store write: the error is the thing being reported, and a
+    // log that only happens if the database is reachable is a log that goes missing
+    // exactly when it is needed. `detail` carries the cause chain in prose — an
+    // Error's message is not an own enumerable property, so the `error` object alone
+    // would serialize to a shape with no explanation in it.
+    logger.error(
+      {
+        projectId,
+        runId,
+        stage: currentStage,
+        durationMs: Date.now() - startedAt,
+        detail,
+        error,
+      },
+      "Analysis run failed",
+    );
+
     // The failure record must survive even if the original error is confusing —
     // but a store that is itself broken must not replace the real error.
     try {
       await deps.runStore.fail(runId, { stage: currentStage, message: detail });
-    } catch {
+    } catch (failureError) {
       // Deliberately swallowed: the run cannot be marked failed if the database is
       // unreachable, and that is strictly better than losing the original error.
+      logger.warn(
+        {
+          projectId,
+          runId,
+          errorMessage: failureError instanceof Error ? failureError.message : String(failureError),
+        },
+        "Could not record the analysis failure",
+      );
     }
 
     throw new AnalysisFailedError(currentStage, runId, detail);

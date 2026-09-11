@@ -19,7 +19,7 @@ bin/
 .DS_Store
 
 ### Env / secrets ###
-.env
+v2/.env
 *.local
 # The .example version stays tracked (it's just a placeholder) — only the
 # real generated file, once someone actually fills in a key, is ignored.

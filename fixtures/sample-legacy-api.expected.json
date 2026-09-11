@@ -1,0 +1,82 @@
+{
+  "$comment": [
+    "What fixtures/sample-legacy-api is DESIGNED to expose — hand-written from the",
+    "fixture's own source, not captured from a model run. Discovery's live output is",
+    "model-produced and therefore not deterministic; this file pins the relationships",
+    "the fixture guarantees so the graph builder and the M4 scoring path can be tested",
+    "against a stable expectation.",
+    "",
+    "Lives beside the fixture rather than inside it: only the directory",
+    "fixtures/sample-legacy-api is zipped and ingested, so this file is never part of",
+    "the analysed corpus and cannot leak answers into retrieval."
+  ],
+  "services": [
+    {
+      "name": "customer-service",
+      "riskLevel": "high",
+      "hasTestCoverageGap": true,
+      "dataQualityIssueCount": 2,
+      "requiresMajorRestructuring": false,
+      "dependentCount": 0,
+      "evidence": [
+        "No test source tree exists at all (customer-service/README.md).",
+        "String-concatenated SQL in CustomerRepository.",
+        "Locally generated customer ids with no uniqueness constraint.",
+        "OrderServiceClient posts over HttpURLConnection with no timeout."
+      ]
+    },
+    {
+      "name": "order-service",
+      "riskLevel": "high",
+      "hasTestCoverageGap": true,
+      "dataQualityIssueCount": 3,
+      "requiresMajorRestructuring": false,
+      "dependentCount": 1,
+      "evidence": [
+        "Denormalized CUSTOMER_NAME duplicates CUSTOMERS.NAME in OrderRepository.",
+        "Unbounded CustomerNameCache that is never invalidated on rename.",
+        "payment_id column has no uniqueness constraint, so duplicate payments persist.",
+        "Synchronous call to payment-service on the write path with no idempotency key."
+      ]
+    },
+    {
+      "name": "payment-service",
+      "riskLevel": "critical",
+      "hasTestCoverageGap": true,
+      "dataQualityIssueCount": 3,
+      "requiresMajorRestructuring": true,
+      "dependentCount": 1,
+      "evidence": [
+        "Static methods over static mutable state; in-flight map never drained.",
+        "Money stored as DOUBLE in PaymentRepository.",
+        "No idempotency key in the charge path (documented as disabled in configuration).",
+        "Gateway 429 responses are not distinguished from other failures.",
+        "A locally generated payment id is returned when the gateway fails."
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "from": "customer-service",
+      "to": "order-service",
+      "type": "sync_call",
+      "evidence": "customer-service/.../OrderServiceClient.java posts to order-service /api/v1/orders/{id}"
+    },
+    {
+      "from": "order-service",
+      "to": "payment-service",
+      "type": "sync_call",
+      "evidence": "order-service/.../PaymentServiceClient.java posts to payment-service /payments/charge"
+    },
+    {
+      "from": "payment-service",
+      "to": "external-payment-gateway",
+      "type": "external_api",
+      "evidence": "payment-service/.../PaymentGatewayClient.java posts to gateway.example-processor.test"
+    }
+  ],
+  "inventory": {
+    "note": "Services that appear as edge endpoints but are not analysed services — external systems the fixture calls.",
+    "external": ["external-payment-gateway"]
+  }
+}

@@ -1,0 +1,25 @@
+[
+  {
+    "service": "customer-service",
+    "uptimePercent": 99.8,
+    "errorRatePercent": 1.2,
+    "p95LatencyMs": 640,
+    "restartCount": 2
+  },
+  {
+    "service": "order-service",
+    "uptimePercent": 99.6,
+    "errorRatePercent": 3.6,
+    "p95LatencyMs": 1180,
+    "restartCount": 3,
+    "note": "Connection pool exhaustion during the evening peak."
+  },
+  {
+    "service": "payment-service",
+    "uptimePercent": 99.5,
+    "errorRatePercent": 6.4,
+    "p95LatencyMs": 2140,
+    "restartCount": 5,
+    "note": "Retry storms after gateway timeouts."
+  }
+]

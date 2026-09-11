@@ -4,7 +4,7 @@ import { getDb, type Database } from "@/db/client";
 import { analysisRuns, findings, serviceDependencies } from "@/db/schema";
 
 import type { AnalysisStore, StoredDependency, StoredFinding } from "./persistence";
-import type { RunRecord, RunReports, RunStore, RunStep } from "./run";
+import type { RunOutputs, RunRecord, RunReports, RunStore, RunStep } from "./run";
 
 /**
  * Drizzle implementations of the run and analysis-result stores.
@@ -37,7 +37,7 @@ export function createDrizzleRunStore(db: Database = getDb()): RunStore {
       await db.update(analysisRuns).set({ step }).where(eq(analysisRuns.id, runId));
     },
 
-    async complete(runId, reports: RunReports) {
+    async complete(runId, reports: RunReports, outputs: RunOutputs) {
       await db
         .update(analysisRuns)
         .set({
@@ -47,6 +47,12 @@ export function createDrizzleRunStore(db: Database = getDb()): RunStore {
           architectureProposal: reports.architectureProposal,
           riskAssessment: reports.riskAssessment,
           comparisonReport: reports.comparisonReport,
+          // The structured outputs the scoring engine reads. Stored as JSON so M4
+          // never has to recover them from the narrative text.
+          discoveryOutput: outputs.discovery,
+          architectureOutput: outputs.architecture,
+          riskOutput: outputs.risk,
+          comparisonOutput: outputs.comparison,
           error: null,
           completedAt: new Date(),
         })
@@ -85,6 +91,22 @@ export function createDrizzleRunStore(db: Database = getDb()): RunStore {
         .limit(1);
       return row ? toRunRecord(row) : null;
     },
+
+    async latestCompletedRun(ownerId, projectId) {
+      const [row] = await db
+        .select()
+        .from(analysisRuns)
+        .where(
+          and(
+            eq(analysisRuns.ownerId, ownerId),
+            eq(analysisRuns.projectId, projectId),
+            eq(analysisRuns.status, "complete"),
+          ),
+        )
+        .orderBy(desc(analysisRuns.createdAt))
+        .limit(1);
+      return row ? toRunRecord(row) : null;
+    },
   };
 }
 
@@ -100,6 +122,15 @@ function toRunRecord(row: RunRow): RunRecord {
     error: row.error,
     createdAt: row.createdAt,
     completedAt: row.completedAt,
+    // Straight from the jsonb columns, unvalidated. The scoring loader
+    // re-validates them against the agent schemas, so a malformed row is treated
+    // as absent rather than crashing a page.
+    outputs: {
+      discovery: row.discoveryOutput ?? null,
+      architecture: row.architectureOutput ?? null,
+      risk: row.riskOutput ?? null,
+      comparison: row.comparisonOutput ?? null,
+    },
   };
 }
 

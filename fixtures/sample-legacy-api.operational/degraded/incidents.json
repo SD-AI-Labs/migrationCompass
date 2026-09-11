@@ -1,0 +1,16 @@
+{
+  "service": "payment-service",
+  "window": "2026-08-01/2026-09-01",
+  "incidents": [
+    {
+      "severity": "critical",
+      "occurredAt": "2026-08-14T19:42:00Z",
+      "summary": "Payment gateway timeouts caused duplicate charge retries for 38 minutes."
+    },
+    {
+      "severity": "medium",
+      "occurredAt": "2026-08-26T07:15:00Z",
+      "summary": "Order search latency exceeded 4s for 20 minutes."
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "migration_parameters_project_idx" ON "migration_parameters" USING btree ("project_id");

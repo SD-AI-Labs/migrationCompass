@@ -55,11 +55,13 @@ function harness(overrides: FakeScript = {}) {
   const model = createFakeModel(baseScript(overrides));
   const tools = createFakeTools();
   const stageStarts: string[] = [];
+  const stageEnds: { stage: string; durationMs: number; toolCalls: number }[] = [];
 
   return {
     model,
     tools,
     stageStarts,
+    stageEnds,
     run: () =>
       runAnalysisGraph({
         projectId: "project-1",
@@ -69,6 +71,9 @@ function harness(overrides: FakeScript = {}) {
           tools: tools.tools,
           onStageStart: async (stage) => {
             stageStarts.push(stage);
+          },
+          onStageEnd: (stage, timing) => {
+            stageEnds.push({ stage, ...timing });
           },
         },
       }),
@@ -425,6 +430,58 @@ describe("stage transitions", () => {
     expect(stageStarts[0]).toBe("discovery");
     expect(stageStarts.indexOf("comparison")).toBeGreaterThan(stageStarts.indexOf("architecture"));
     expect(stageStarts.indexOf("comparison")).toBeGreaterThan(stageStarts.indexOf("risk"));
+  });
+
+  it("reports each stage finishing exactly once, with a duration and a tool-call count", async () => {
+    const { stageEnds, run } = harness();
+    await run();
+
+    expect(stageEnds.map((end) => end.stage).sort()).toEqual([
+      "architecture",
+      "comparison",
+      "discovery",
+      "risk",
+    ]);
+
+    for (const end of stageEnds) {
+      expect(Number.isFinite(end.durationMs)).toBe(true);
+      expect(end.durationMs).toBeGreaterThanOrEqual(0);
+      expect(Number.isInteger(end.toolCalls)).toBe(true);
+    }
+  });
+
+  it("reports the stages ending in dependency order", async () => {
+    const { stageEnds, run } = harness();
+    const outcome = await run();
+
+    const ended = stageEnds.map((end) => end.stage);
+    expect(ended.indexOf("discovery")).toBeLessThan(ended.indexOf("architecture"));
+    expect(ended.indexOf("discovery")).toBeLessThan(ended.indexOf("risk"));
+    expect(ended.indexOf("architecture")).toBeLessThan(ended.indexOf("comparison"));
+    expect(ended.indexOf("risk")).toBeLessThan(ended.indexOf("comparison"));
+
+    // The graph's own record and the callbacks agree about what ran.
+    expect([...outcome.completedStages].sort()).toEqual([...ended].sort());
+  });
+
+  it("times each concurrent branch around its own work", async () => {
+    // Architecture is made slow on purpose; Risk is not. If the runner timed
+    // "stage to stage" instead, the two branches' overlap would be attributed to
+    // whichever reported last and this assertion would fail.
+    const { stageEnds, run } = harness({
+      "architecture.draft": async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return ARCHITECTURE_MARKER;
+      },
+    });
+
+    await run();
+
+    const architecture = stageEnds.find((end) => end.stage === "architecture");
+    const risk = stageEnds.find((end) => end.stage === "risk");
+
+    expect(architecture?.durationMs).toBeGreaterThanOrEqual(25);
+    expect(risk?.durationMs).toBeLessThan(architecture?.durationMs ?? 0);
   });
 });
 

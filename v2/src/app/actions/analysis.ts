@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { notFound } from "next/navigation";
 import { after } from "next/server";
 
 import { hasDatabaseConfig } from "@/db/client";
@@ -26,6 +27,18 @@ import { createAnalysisDeps } from "@/lib/agents/wiring";
  * `pending` state: a row that exists but has not started must not claim to be
  * running.
  *
+ * Returning early means this action cannot be the thing that reports completion —
+ * it is long gone by then. The two halves of that contract live elsewhere and are
+ * deliberately paired:
+ *
+ *  - the runner (`executeAnalysisRun`) writes every state transition and logs it;
+ *  - `readAnalysisProgressAction` reads the row back, and the client component in
+ *    the project list polls it and re-renders the page when the run finishes.
+ *
+ * The `revalidatePath` below refreshes the page into its "running" state. It is
+ * *not* what shows the results: by the time there are any, the request that
+ * triggered it has finished.
+ *
  * Failures are already persisted by the runner before it rethrows, so the catch
  * here only stops an unhandled rejection — the run's own record is the source of
  * truth, not this log line.
@@ -45,23 +58,20 @@ export async function startAnalysisAction(formData: FormData): Promise<void> {
   try {
     const { runId } = await createAnalysisRun({ ownerId, projectId, deps });
 
+    getLogger().info({ projectId, runId, stage: "starting" }, "Analysis run queued");
+
     after(async () => {
       await withSpan("analysis.run", { "project.id": projectId, "run.id": runId }, async () => {
         try {
-          const result = await executeAnalysisRun({ runId, projectId, deps });
-          getLogger().info(
-            {
-              runId,
-              findings: result.persisted.findings.length,
-              dependencies: result.persisted.dependencies.length,
-              undiscoveredServices: result.persisted.undiscoveredServices,
-            },
-            "Analysis run completed",
-          );
+          await executeAnalysisRun({ runId, projectId, deps });
         } catch (error) {
-          // Already persisted as failed by the runner; logged here so the process
-          // log and the run record agree.
-          getLogger().error({ runId, error }, "Analysis run failed");
+          // The run's own record, and the structured line the runner logs, already
+          // describe the failure. This exists only so a rejected `after()` promise
+          // does not surface as an unhandled rejection.
+          getLogger().debug(
+            { runId, projectId, error },
+            "Analysis run rejected its caller after recording its failure",
+          );
         }
       });
     });
@@ -69,8 +79,11 @@ export async function startAnalysisAction(formData: FormData): Promise<void> {
     revalidatePath("/");
   } catch (error) {
     if (error instanceof ProjectNotFoundError) {
+      // The project is not visible to this session — deleted, or another session's.
+      // Same not-found result as the delete action, so the two cannot be told apart
+      // from outside either.
       getLogger().warn({ projectId }, "Analysis requested for an invisible project");
-      return;
+      notFound();
     }
     throw error;
   }

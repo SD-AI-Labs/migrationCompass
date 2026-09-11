@@ -1,0 +1,25 @@
+[
+  {
+    "service": "customer-service",
+    "uptimePercent": 99.995,
+    "errorRatePercent": 0.05,
+    "p95LatencyMs": 120,
+    "restartCount": 0,
+    "note": "Read-only path, no deploys this quarter."
+  },
+  {
+    "service": "order-service",
+    "uptimePercent": 99.99,
+    "errorRatePercent": 0.08,
+    "p95LatencyMs": 180,
+    "restartCount": 1
+  },
+  {
+    "service": "payment-service",
+    "uptimePercent": 99.98,
+    "errorRatePercent": 0.12,
+    "p95LatencyMs": 260,
+    "restartCount": 0,
+    "note": "No duplicate-charge incidents observed in the last 30 days."
+  }
+]
